@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../models/user.dart';
+import '../services/api_service.dart';
+import '../crypto/key_store.dart';
 import 'chat_screen.dart';
 import 'login_screen.dart';
 
@@ -12,50 +14,103 @@ class ContactsScreen extends StatefulWidget {
 }
 
 class _ContactsScreenState extends State<ContactsScreen> {
-  List<AppUser> _users = [];
+  final _searchController = TextEditingController();
+  List<AppUser> _myContacts = [];
   bool _isLoading = false;
+  bool _isSearching = false;
 
   @override
   void initState() {
     super.initState();
-    _loadUsers();
+    _loadMyContacts();
   }
 
-  Future<void> _loadUsers() async {
-    setState(() => _isLoading = true);
-    
-    // TODO: Load users from API
-    await Future.delayed(const Duration(seconds: 1));
-    
-    // Placeholder data
-    _users = [
-      AppUser(userId: 'alice', username: 'Alice'),
-      AppUser(userId: 'bob', username: 'Bob'),
-      AppUser(userId: 'charlie', username: 'Charlie'),
-    ];
-    
+  Future<void> _loadMyContacts() async {
+    // In a private group, you maintain your own contact list
+    // For now, this will be empty until users add each other
     setState(() => _isLoading = false);
   }
 
+  Future<void> _addUserByUsername() async {
+    final username = _searchController.text.trim();
+    if (username.isEmpty) return;
+
+    setState(() => _isSearching = true);
+    
+    try {
+      // Try to find user by their userId (username format)
+      final allUsers = await ApiService.getUsers();
+      final foundUser = allUsers.firstWhere(
+        (user) => user.userId == username.toLowerCase(),
+        orElse: () => throw Exception('User "$username" not found'),
+      );
+
+      // Check if already in contacts
+      if (_myContacts.any((contact) => contact.userId == foundUser.userId)) {
+        throw Exception('Already in contacts');
+      }
+
+      // Get their public key
+      final publicKey = await ApiService.getPublicKey(foundUser.userId);
+      
+      // Add to contacts
+      setState(() {
+        _myContacts.add(foundUser);
+      });
+      
+      _searchController.clear();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added ${foundUser.username} to contacts')),
+        );
+      }
+      
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
   Future<void> _startChat(AppUser user) async {
-    // TODO: Navigate to chat with proper encryption setup
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatScreen(
-          peerId: user.userId,
-          peerName: user.username,
-        ),
-      ),
-    );
+    try {
+      // Fetch peer's public key before starting chat
+      final publicKey = await ApiService.getPublicKey(user.userId);
+      
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(
+              peerId: user.userId,
+              peerName: user.username,
+              peerPublicKeyBase64: publicKey,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start chat: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _logout() async {
-    // TODO: Clear session and navigate to login
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-    );
+    await KeyStore.clear();
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
   }
 
   @override
@@ -65,28 +120,94 @@ class _ContactsScreenState extends State<ContactsScreen> {
         title: const Text('Contacts'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadUsers,
-          ),
-          IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _logout,
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _users.length,
-              itemBuilder: (context, index) {
-                final user = _users[index];
-                return ListTile(
-                  title: Text(user.username),
-                  subtitle: Text(user.userId),
-                  onTap: () => _startChat(user),
-                );
-              },
+      body: Column(
+        children: [
+          // Add user by username section
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Add Contact',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Enter their username (e.g. "alice_smith")',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: const InputDecoration(
+                          hintText: 'Username...',
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: (_) => _addUserByUsername(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: _isSearching ? null : _addUserByUsername,
+                      icon: _isSearching 
+                          ? const CircularProgressIndicator()
+                          : const Icon(Icons.person_add),
+                    ),
+                  ],
+                ),
+              ],
             ),
+          ),
+          const Divider(),
+          
+          // My contacts section
+          Expanded(
+            child: _myContacts.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.people_outline, size: 64, color: Colors.grey),
+                        SizedBox(height: 16),
+                        Text(
+                          'No contacts yet',
+                          style: TextStyle(fontSize: 18, color: Colors.grey),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Add friends using their username',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _myContacts.length,
+                    itemBuilder: (context, index) {
+                      final user = _myContacts[index];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text(user.username[0].toUpperCase()),
+                        ),
+                        title: Text(user.username),
+                        subtitle: Text('@${user.userId}'),
+                        trailing: const Icon(Icons.chat),
+                        onTap: () => _startChat(user),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
