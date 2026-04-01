@@ -7,6 +7,7 @@ import '../core/theme.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_store.dart';
 import '../models/message.dart';
+import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/chat_bubble.dart';
 
@@ -57,8 +58,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       setState(() => _isInit = true);
 
-      // 4. Connect to socket and listen for messages
-      SocketService.connect(_myUserId!);
+      // 4. Get a socket auth token from secure storage, then connect
+      final token = await KeyStore.getAuthToken();
+      if (token == null) {
+        throw Exception('Missing auth token - please login again.');
+      }
+      await SocketService.connect(_myUserId!, token);
+
 
       // 5. Listen for incoming text messages
       SocketService.onMessage((data) async {

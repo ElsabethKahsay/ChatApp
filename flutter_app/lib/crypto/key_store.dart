@@ -15,6 +15,7 @@ class KeyStore {
   static const _kPublicKey  = 'x25519_public';
   static const _kUserId     = 'user_id';
   static const _kUsername   = 'username';
+  static const _kAuthToken  = 'auth_token';
 
   // ── Key pair ───────────────────────────────────────────────────────────────
 
@@ -52,6 +53,9 @@ class KeyStore {
 
   static Future<String?> getUserId()   => _storage.read(key: _kUserId);
   static Future<String?> getUsername() => _storage.read(key: _kUsername);
+  static Future<String?> getAuthToken() => _storage.read(key: _kAuthToken);
+
+  static Future<void> saveAuthToken(String token) => _storage.write(key: _kAuthToken, value: token);
 
   static Future<bool> hasIdentity() async {
     final id = await _storage.read(key: _kUserId);
@@ -59,5 +63,7 @@ class KeyStore {
   }
 
   /// Wipe everything — useful for "sign out" or "reset app".
-  static Future<void> clear() => _storage.deleteAll();
+  static Future<void> clear() async {
+    await _storage.deleteAll();
+  }
 }

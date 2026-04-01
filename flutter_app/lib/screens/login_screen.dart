@@ -16,7 +16,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _displayNameController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _isLoginMode = true;
 
   @override
   void initState() {
@@ -49,33 +51,37 @@ class _LoginScreenState extends State<LoginScreen> {
     final firstName = _firstNameController.text.trim();
     final lastName = _lastNameController.text.trim();
     final displayName = _displayNameController.text.trim();
-    
-    if (firstName.isEmpty || lastName.isEmpty || displayName.isEmpty) return;
+    final password = _passwordController.text.trim();
+
+    if (firstName.isEmpty || lastName.isEmpty || displayName.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('All fields are required')),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
-    
+
     try {
-      // 1. Generate userId from names
       final userId = '${firstName.toLowerCase()}_${lastName.toLowerCase()}';
-      
-      // 2. Generate X25519 key pair
+
       final keyPair = await CryptoService.generateKeyPair();
       await KeyStore.saveKeyPair(keyPair);
-      
-      // 3. Export public key
+
       final publicKey = await CryptoService.exportPublicKey(keyPair);
-      
-      // 4. Register with backend
+
       await ApiService.register(
         userId: userId,
         username: displayName,
         publicKey: publicKey,
+        password: password,
         bday: DateTime.now(),
       );
-      
-      // 5. Save identity locally
+
+      final token = await ApiService.login(userId, password);
       await KeyStore.saveIdentity(userId: userId, username: displayName);
-      
+      await KeyStore.saveAuthToken(token);
+
       if (mounted) {
         Navigator.pushReplacement(
           context,
@@ -90,6 +96,53 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _login() async {
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (firstName.isEmpty || lastName.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Name and password are required to login')),
+      );
+      return;
+    }
+
+    final userId = '${firstName.toLowerCase()}_${lastName.toLowerCase()}';
+
+    setState(() => _isLoading = true);
+
+    try {
+      final token = await ApiService.login(userId, password);
+      final user = await KeyStore.getUsername();
+      if (user == null) {
+        await KeyStore.saveIdentity(userId: userId, username: userId);
+      }
+      await KeyStore.saveAuthToken(token);
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const ContactsScreen()),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Login error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_isLoginMode) {
+      await _login();
+    } else {
+      await _register();
     }
   }
 
@@ -126,13 +179,33 @@ class _LoginScreenState extends State<LoginScreen> {
                 labelText: 'Display Name',
                 border: OutlineInputBorder(),
               ),
+              enabled: !_isLoginMode,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _isLoading ? null : _register,
+              onPressed: _isLoading ? null : _submit,
               child: _isLoading
                   ? const CircularProgressIndicator()
-                  : const Text('Join the girls'),
+                  : Text(_isLoginMode ? 'Login' : 'Register'),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _isLoginMode = !_isLoginMode;
+                });
+              },
+              child: Text(_isLoginMode
+                  ? 'Need an account? Register'
+                  : 'Already have an account? Login'),
             ),
           ],
         ),

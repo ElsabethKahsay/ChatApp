@@ -26,9 +26,33 @@ class _ContactsScreenState extends State<ContactsScreen> {
   }
 
   Future<void> _loadMyContacts() async {
-    // In a private group, you maintain your own contact list
-    // For now, this will be empty until users add each other
-    setState(() => _isLoading = false);
+    setState(() => _isLoading = true);
+    try {
+      final token = await KeyStore.getAuthToken();
+      final currentUserId = await KeyStore.getUserId();
+      if (token == null || currentUserId == null) return;
+
+      final allUsers = await ApiService.getUsers(token);
+      final onlineUsers = await ApiService.getOnlineUsers(token);
+      final onlineIndex = {for (var u in onlineUsers) u.userId: true};
+
+      setState(() {
+        _myContacts = allUsers
+            .where((u) => u.userId != currentUserId)
+            .map((u) => AppUser(
+                  userId: u.userId,
+                  username: u.username,
+                  publicKey: u.publicKey,
+                  lastSeen: u.lastSeen,
+                  online: onlineIndex[u.userId] == true,
+                ))
+            .toList();
+      });
+    } catch (e) {
+      print('❌ Load contacts error: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _addUserByUsername() async {
