@@ -108,20 +108,6 @@ class SocketService {
     });
   }
 
-  // ── Read Receipts ───────────────────────────────────────────────────────────
-
-  static void sendReadReceipt({required String toUserId, required String messageId}) {
-    if (!isConnected) return;
-    _socket!.emit('message_read', {'to': toUserId, 'messageId': messageId});
-  }
-
-  static void onReadReceipt(void Function(String messageId, int readAt) handler) {
-    _socket?.on('message_read', (data) {
-      final map = Map<String, dynamic>.from(data as Map);
-      handler(map['messageId'] as String, map['readAt'] as int);
-    });
-  }
-
   static void onPresence(void Function(String userId, bool online) handler) {
     _socket?.on('presence_update', (data) {
       final map = Map<String, dynamic>.from(data as Map);

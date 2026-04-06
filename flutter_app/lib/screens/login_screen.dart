@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import '../core/theme.dart';
+import 'package:uuid/uuid.dart';
+import '../services/api_service.dart';
+import '../services/socket_service.dart';
+import '../services/push_notification_service.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_store.dart';
-import '../services/api_service.dart';
 import 'contacts_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -13,201 +15,371 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _firstNameController = TextEditingController();
-  final _lastNameController = TextEditingController();
-  final _displayNameController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
-  bool _isLoginMode = true;
+  bool _isRegistering = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  String? _errorMessage;
+
+  // Validation patterns
+  static final _usernameRegex = RegExp(r'^[a-zA-Z0-9_]+$');
+  static const int minUsernameLength = 3;
+  static const int maxUsernameLength = 20;
+  static const int minPasswordLength = 6;
 
   @override
-  void initState() {
-    super.initState();
-    _checkExistingSession();
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
   }
 
-  Future<void> _checkExistingSession() async {
-    try {
-      // Check if user already exists in secure storage
-      final hasIdentity = await KeyStore.hasIdentity();
-      
-      if (hasIdentity) {
-        // User exists - skip login and go to contacts
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const ContactsScreen()),
-          );
-        }
-      }
-      // If no session found, stay on login screen
-    } catch (e) {
-      // If error checking session, stay on login screen
-      print('Session check error: $e');
+  void _showError(String message) {
+    setState(() => _errorMessage = message);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Dismiss',
+          textColor: Colors.white,
+          onPressed: () => ScaffoldMessenger.of(context).hideCurrentSnackBar(),
+        ),
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    setState(() => _errorMessage = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  String? _validateUsername(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Username is required';
     }
+    final username = value.trim();
+    if (username.length < minUsernameLength) {
+      return 'Username must be at least $minUsernameLength characters';
+    }
+    if (username.length > maxUsernameLength) {
+      return 'Username must be at most $maxUsernameLength characters';
+    }
+    if (!_usernameRegex.hasMatch(username)) {
+      return 'Username can only contain letters, numbers, and underscores';
+    }
+    return null;
   }
 
-  Future<void> _register() async {
-    final firstName = _firstNameController.text.trim();
-    final lastName = _lastNameController.text.trim();
-    final displayName = _displayNameController.text.trim();
-    final password = _passwordController.text.trim();
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Password is required';
+    }
+    if (value.length < minPasswordLength) {
+      return 'Password must be at least $minPasswordLength characters';
+    }
+    return null;
+  }
 
-    if (firstName.isEmpty || lastName.isEmpty || displayName.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('All fields are required')),
-      );
+  String? _validateConfirmPassword(String? value) {
+    if (_isRegistering) {
+      if (value == null || value.isEmpty) {
+        return 'Please confirm your password';
+      }
+      if (value != _passwordController.text) {
+        return 'Passwords do not match';
+      }
+    }
+    return null;
+  }
+
+  Future<void> _handleAuth() async {
+    // Validate form
+    if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    setState(() => _isLoading = true);
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     try {
-      final userId = '${firstName.toLowerCase()}_${lastName.toLowerCase()}';
+      if (_isRegistering) {
+        _showSuccess('Creating your account...');
 
-      final keyPair = await CryptoService.generateKeyPair();
-      await KeyStore.saveKeyPair(keyPair);
+        // 1. Generate E2E Key Pair
+        final keyPair = await CryptoService.generateKeyPair();
+        final publicKeyB64 = await CryptoService.exportPublicKey(keyPair);
+        final userId = const Uuid().v4();
 
-      final publicKey = await CryptoService.exportPublicKey(keyPair);
+        // 2. Register on Server
+        await ApiService.register(
+          userId: userId,
+          username: username,
+          publicKey: publicKeyB64,
+          password: password,
+        );
 
-      await ApiService.register(
-        userId: userId,
-        username: displayName,
-        publicKey: publicKey,
-        password: password,
-        bday: DateTime.now(),
-      );
+        // 3. Save Keys and Identity Locally
+        await KeyStore.saveKeyPair(keyPair);
+        await KeyStore.saveIdentity(userId: userId, username: username);
 
-      final token = await ApiService.login(userId, password);
-      await KeyStore.saveIdentity(userId: userId, username: displayName);
+        _showSuccess('Account created! Logging in...');
+      }
+
+      // 4. Perform Login
+      final loginData = await ApiService.login(username, password);
+      final String token = loginData['token'];
+      final String userId = loginData['userId'];
+
+      // 5. Persist Session
       await KeyStore.saveAuthToken(token);
+      await KeyStore.saveIdentity(userId: userId, username: username);
+
+      // 6. Connect Socket
+      await SocketService.connect(userId, token);
+
+      // 7. Initialize push notifications
+      try {
+        await PushNotificationService.init();
+      } catch (e) {
+        debugPrint('Push notification init failed (expected on web): $e');
+      }
 
       if (mounted) {
+        _showSuccess('Welcome, $username!');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const ContactsScreen()),
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+      String errorMsg = e.toString();
+      // Clean up error message
+      if (errorMsg.contains('Exception:')) {
+        errorMsg = errorMsg.replaceFirst('Exception:', '').trim();
       }
+      _showError(errorMsg);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  Future<void> _login() async {
-    final firstName = _firstNameController.text.trim();
-    final lastName = _lastNameController.text.trim();
-    final password = _passwordController.text.trim();
-
-    if (firstName.isEmpty || lastName.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Name and password are required to login')),
-      );
-      return;
-    }
-
-    final userId = '${firstName.toLowerCase()}_${lastName.toLowerCase()}';
-
-    setState(() => _isLoading = true);
-
-    try {
-      final token = await ApiService.login(userId, password);
-      final user = await KeyStore.getUsername();
-      if (user == null) {
-        await KeyStore.saveIdentity(userId: userId, username: userId);
-      }
-      await KeyStore.saveAuthToken(token);
-
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ContactsScreen()),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Login error: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _submit() async {
-    if (_isLoginMode) {
-      await _login();
-    } else {
-      await _register();
-    }
+  void _toggleMode() {
+    setState(() {
+      _isRegistering = !_isRegistering;
+      _errorMessage = null;
+      _confirmPasswordController.clear();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Login'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextField(
-              controller: _firstNameController,
-              decoration: const InputDecoration(
-                labelText: 'First Name',
-                border: OutlineInputBorder(),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24.0),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(
+                    Icons.lock_outline,
+                    size: 64,
+                    color: Colors.blue,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'SecureChat',
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _isRegistering ? 'Create a new account' : 'Sign in to continue',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Username field
+                  TextFormField(
+                    controller: _usernameController,
+                    decoration: InputDecoration(
+                      labelText: 'Username',
+                      hintText: 'Enter your username',
+                      prefixIcon: const Icon(Icons.person),
+                      border: const OutlineInputBorder(),
+                      helperText: _isRegistering
+                          ? '$minUsernameLength-$maxUsernameLength chars, letters, numbers, underscores'
+                          : null,
+                    ),
+                    validator: _validateUsername,
+                    textInputAction: TextInputAction.next,
+                    enabled: !_isLoading,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Password field
+                  TextFormField(
+                    controller: _passwordController,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      hintText: 'Enter your password',
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                        onPressed: () => setState(
+                            () => _obscurePassword = !_obscurePassword),
+                      ),
+                      border: const OutlineInputBorder(),
+                      helperText: _isRegistering
+                          ? 'At least $minPasswordLength characters'
+                          : null,
+                    ),
+                    obscureText: _obscurePassword,
+                    validator: _validatePassword,
+                    textInputAction: _isRegistering
+                        ? TextInputAction.next
+                        : TextInputAction.done,
+                    onFieldSubmitted: _isRegistering ? null : (_) => _handleAuth(),
+                    enabled: !_isLoading,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Confirm password field (register only)
+                  if (_isRegistering)
+                    TextFormField(
+                      controller: _confirmPasswordController,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm Password',
+                        hintText: 'Re-enter your password',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureConfirmPassword
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                          ),
+                          onPressed: () => setState(() =>
+                              _obscureConfirmPassword =
+                                  !_obscureConfirmPassword),
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                      obscureText: _obscureConfirmPassword,
+                      validator: _validateConfirmPassword,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => _handleAuth(),
+                      enabled: !_isLoading,
+                    ),
+
+                  if (_isRegistering) const SizedBox(height: 16),
+
+                  // Error message display
+                  if (_errorMessage != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.error_outline,
+                              color: Colors.red[700], size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: TextStyle(color: Colors.red[700]),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  if (_errorMessage != null) const SizedBox(height: 16),
+
+                  // Submit button
+                  SizedBox(
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _handleAuth,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : Text(
+                              _isRegistering ? 'Create Account' : 'Sign In',
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Toggle mode button
+                  TextButton(
+                    onPressed: _isLoading ? null : _toggleMode,
+                    child: Text(
+                      _isRegistering
+                          ? 'Already have an account? Sign In'
+                          : 'Don\'t have an account? Create one',
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _lastNameController,
-              decoration: const InputDecoration(
-                labelText: 'Last Name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _displayNameController,
-              decoration: const InputDecoration(
-                labelText: 'Display Name',
-                border: OutlineInputBorder(),
-              ),
-              enabled: !_isLoginMode,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _passwordController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Password',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _isLoading ? null : _submit,
-              child: _isLoading
-                  ? const CircularProgressIndicator()
-                  : Text(_isLoginMode ? 'Login' : 'Register'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _isLoginMode = !_isLoginMode;
-                });
-              },
-              child: Text(_isLoginMode
-                  ? 'Need an account? Register'
-                  : 'Already have an account? Login'),
-            ),
-          ],
+          ),
         ),
       ),
     );

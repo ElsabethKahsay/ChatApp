@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../core/theme.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
 import '../crypto/key_store.dart';
@@ -14,15 +13,45 @@ class ContactsScreen extends StatefulWidget {
 }
 
 class _ContactsScreenState extends State<ContactsScreen> {
-  final _searchController = TextEditingController();
   List<AppUser> _myContacts = [];
+  List<AppUser> _searchResults = [];
   bool _isLoading = false;
   bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadMyContacts();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _searchUsers(String query) async {
+    if (query.length < 2) {
+      setState(() {
+        _searchResults = [];
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() => _isSearching = true);
+    try {
+      final token = await KeyStore.getAuthToken();
+      if (token == null) return;
+
+      final results = await ApiService.searchUsers(token, query);
+      setState(() => _searchResults = results);
+    } catch (e) {
+      print('❌ Search error: $e');
+    } finally {
+      setState(() => _isSearching = false);
+    }
   }
 
   Future<void> _loadMyContacts() async {
@@ -55,62 +84,20 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  Future<void> _addUserByUsername() async {
-    final username = _searchController.text.trim();
-    if (username.isEmpty) return;
-
-    setState(() => _isSearching = true);
-    
-    try {
-      // Try to find user by their userId (username format)
-      final allUsers = await ApiService.getUsers();
-      final foundUser = allUsers.firstWhere(
-        (user) => user.userId == username.toLowerCase(),
-        orElse: () => throw Exception('User "$username" not found'),
-      );
-
-      // Check if already in contacts
-      if (_myContacts.any((contact) => contact.userId == foundUser.userId)) {
-        throw Exception('Already in contacts');
-      }
-
-      // Get their public key
-      final publicKey = await ApiService.getPublicKey(foundUser.userId);
-      
-      // Add to contacts
-      setState(() {
-        _myContacts.add(foundUser);
-      });
-      
-      _searchController.clear();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added ${foundUser.username} to contacts')),
-        );
-      }
-      
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSearching = false);
-    }
-  }
-
   Future<void> _startChat(AppUser user) async {
     try {
-      // Fetch peer's public key before starting chat
-      final publicKey = await ApiService.getPublicKey(user.userId);
-      
+      final token = await KeyStore.getAuthToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+      final publicKey = await ApiService.getPublicKey(user.userId, token);
+
       if (mounted) {
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => ChatScreen(
+              contact: user,
               peerId: user.userId,
               peerName: user.username,
               peerPublicKeyBase64: publicKey,
@@ -142,6 +129,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Contacts'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -149,89 +138,78 @@ class _ContactsScreenState extends State<ContactsScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Add user by username section
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Add Contact',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Enter their username (e.g. "alice_smith")',
-                  style: TextStyle(color: Colors.grey),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _searchController,
-                        decoration: const InputDecoration(
-                          hintText: 'Username...',
-                          border: OutlineInputBorder(),
-                        ),
-                        onSubmitted: (_) => _addUserByUsername(),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: _isSearching ? null : _addUserByUsername,
-                      icon: _isSearching 
-                          ? const CircularProgressIndicator()
-                          : const Icon(Icons.person_add),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
-          
-          // My contacts section
-          Expanded(
-            child: _myContacts.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.people_outline, size: 64, color: Colors.grey),
-                        SizedBox(height: 16),
-                        Text(
-                          'No contacts yet',
-                          style: TextStyle(fontSize: 18, color: Colors.grey),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          'Add friends using their username',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    itemCount: _myContacts.length,
-                    itemBuilder: (context, index) {
-                      final user = _myContacts[index];
-                      return ListTile(
-                        leading: CircleAvatar(
-                          child: Text(user.username[0].toUpperCase()),
-                        ),
-                        title: Text(user.username),
-                        subtitle: Text('@${user.userId}'),
-                        trailing: const Icon(Icons.chat),
-                        onTap: () => _startChat(user),
-                      );
-                    },
+      extendBodyBehindAppBar: true,
+      body: Padding(
+        padding: const EdgeInsets.only(top: 16.0),
+        child: Column(
+          children: [
+            // Search Bar
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search users...',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            _searchUsers('');
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.7),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide.none,
                   ),
-          ),
-        ],
+                ),
+                onChanged: _searchUsers,
+              ),
+            ),
+            // Contact List
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _buildContactList(),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildContactList() {
+    final users = _searchController.text.isNotEmpty ? _searchResults : _myContacts;
+    
+    if (users.isEmpty) {
+      return Center(
+        child: Text(
+          _searchController.text.isNotEmpty 
+              ? 'No users found' 
+              : 'No contacts yet',
+          style: const TextStyle(color: Colors.grey),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: users.length,
+      itemBuilder: (context, index) {
+        final contact = users[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: contact.online ? Colors.green : Colors.grey,
+            child: Text(contact.username[0].toUpperCase()),
+          ),
+          title: Text(contact.username),
+          subtitle: Text(contact.online ? 'Online' : 'Offline'),
+          onTap: () => _startChat(contact),
+        );
+      },
     );
   }
 }

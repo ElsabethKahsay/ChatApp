@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../services/message_store.dart';
 
 /// Persists the user's X25519 key pair in the device's secure enclave.
 /// iOS: Keychain  |  Android: Keystore (EncryptedSharedPreferences)
@@ -66,6 +65,5 @@ class KeyStore {
   /// Wipe everything — useful for "sign out" or "reset app".
   static Future<void> clear() async {
     await _storage.deleteAll();
-    await MessageStore.clearAll();
   }
 }

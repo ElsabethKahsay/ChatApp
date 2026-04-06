@@ -3,10 +3,8 @@ import '../core/constants.dart';
 import '../models/user.dart';
 import 'package:http/http.dart' as http;
 
-
-/// REST API client stub
 class ApiService {
-  // TODO: Implement actual API calls
+  static const Duration _timeout = Duration(seconds: 30);
 
   static Future<void> register({
     required String userId,
@@ -26,60 +24,94 @@ class ApiService {
           'password': password,
           if (bday != null) 'bday': bday.toIso8601String(),
         }),
-      );
+      ).timeout(_timeout);
       
-      if (response.statusCode != 200) {
-        throw Exception('Registration failed: ${response.body}');
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return;
       }
       
-      print('✅ User registered successfully');
+      if (response.statusCode == 409) {
+        final error = jsonDecode(response.body)['error'] ?? 'Username already taken';
+        throw Exception(error);
+      }
+      
+      if (response.statusCode == 400) {
+        final error = jsonDecode(response.body)['error'] ?? 'Invalid input';
+        throw Exception(error);
+      }
+      
+      final error = jsonDecode(response.body)['error'] ?? 'Registration failed (HTTP ${response.statusCode})';
+      throw Exception(error);
+    } on FormatException catch (_) {
+      throw Exception('Invalid server response. Please try again.');
     } catch (e) {
-      print('❌ Registration error: $e');
-      rethrow;
+      if (e is Exception) rethrow;
+      throw Exception('Network error. Please check your connection.');
     }
   }
 
-  static Future<String> getPublicKey(String userId) async {
+  static Future<Map<String, dynamic>> login(String username, String password) async {
     try {
-      final response = await http.get(
-        Uri.parse('${Constants.serverUrl}/api/public-key/$userId'),
-      );
-      
-      if (response.statusCode == 404) {
-        throw Exception('User $userId not found');
+      final response = await http.post(
+        Uri.parse('${Constants.serverUrl}/api/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'username': username, 'password': password}),
+      ).timeout(_timeout);
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
       }
       
-      if (response.statusCode != 200) {
-        throw Exception('Failed to get public key: ${response.body}');
+      if (response.statusCode == 401) {
+        final error = jsonDecode(response.body)['error'] ?? 'Invalid username or password';
+        throw Exception(error);
       }
       
-      final data = jsonDecode(response.body);
-      return data['publicKey'] as String;
+      if (response.statusCode == 400) {
+        final error = jsonDecode(response.body)['error'] ?? 'Please enter username and password';
+        throw Exception(error);
+      }
+
+      final error = jsonDecode(response.body)['error'] ?? 'Login failed (HTTP ${response.statusCode})';
+      throw Exception(error);
+    } on FormatException catch (_) {
+      throw Exception('Invalid server response. Please try again.');
     } catch (e) {
-      print('❌ Get public key error: $e');
-      rethrow;
+      if (e is Exception) rethrow;
+      throw Exception('Network error. Please check your connection.');
     }
+  }
+
+  static Future<String> getPublicKey(String userId, String token) async {
+    final response = await http.get(
+      Uri.parse('${Constants.serverUrl}/api/public-key/$userId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to get public key');
+    }
+
+    final data = jsonDecode(response.body);
+    return data['publicKey'] as String;
   }
 
   static Future<List<AppUser>> getUsers(String token) async {
-    try {
-      final response = await http.get(
-        Uri.parse('${Constants.serverUrl}/api/users'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      
-      if (response.statusCode != 200) {
-        throw Exception('Failed to get users: ${response.body}');
-      }
-      
-      final data = jsonDecode(response.body);
-      final List<dynamic> usersList = data['users'];
-      
-      return usersList.map((json) => AppUser.fromJson(json as Map<String, dynamic>)).toList();
-    } catch (e) {
-      print('❌ Get users error: $e');
-      rethrow;
+    final response = await http.get(
+      Uri.parse('${Constants.serverUrl}/api/users'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load users');
     }
+
+    final data = jsonDecode(response.body);
+    final List<dynamic> usersList = data['users'];
+    return usersList.map((json) => AppUser.fromJson(json as Map<String, dynamic>)).toList();
   }
 
   static Future<List<AppUser>> getOnlineUsers(String token) async {
@@ -89,7 +121,7 @@ class ApiService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception('Get online users failed: ${response.body}');
+      throw Exception('Failed to load online users');
     }
 
     final data = jsonDecode(response.body);
@@ -97,17 +129,34 @@ class ApiService {
     return usersList.map((json) => AppUser.fromJson(json as Map<String, dynamic>)).toList();
   }
 
-  static Future<Map<String, dynamic>> getPresence(String token, String userId) async {
+  static Future<List<AppUser>> searchUsers(String token, String query) async {
     final response = await http.get(
-      Uri.parse('${Constants.serverUrl}/api/presence/$userId'),
+      Uri.parse('${Constants.serverUrl}/api/users/search?q=$query'),
       headers: {'Authorization': 'Bearer $token'},
     );
 
     if (response.statusCode != 200) {
-      throw Exception('Get presence failed: ${response.body}');
+      throw Exception('Failed to search users');
     }
 
-    return jsonDecode(response.body) as Map<String, dynamic>;
+    final data = jsonDecode(response.body);
+    final List<dynamic> usersList = data['users'];
+    return usersList.map((json) => AppUser.fromJson(json as Map<String, dynamic>)).toList();
+  }
+
+  static Future<void> registerFcmToken(String token, String fcmToken) async {
+    final response = await http.post(
+      Uri.parse('${Constants.serverUrl}/api/fcm-token'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'token': fcmToken}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to register FCM token');
+    }
   }
 
   static Future<void> updateStatus(String token, bool status) async {
@@ -121,39 +170,7 @@ class ApiService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception('Update status failed: ${response.body}');
+      throw Exception('Failed to update status');
     }
-  }
-
-  static Future<String> login(String userId, String password) async {
-    final response = await http.post(
-      Uri.parse('${Constants.serverUrl}/api/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'userId': userId, 'password': password}),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Login failed: ${response.body}');
-    }
-
-    final data = jsonDecode(response.body);
-    return data['token'] as String;
-  }
-
-  static Future<String> requestSocketToken(String userId, String password) async {
-    // Backwards compatibility: token endpoint still accepts password for security.
-    final response = await http.post(
-      Uri.parse('${Constants.serverUrl}/api/auth'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'userId': userId, 'password': password}),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Socket auth failed: ${response.body}');
-    }
-
-    final data = jsonDecode(response.body);
-    return data['token'] as String;
   }
 }
-

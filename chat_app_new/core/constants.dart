@@ -4,9 +4,9 @@ class Constants {
   // Android emulator uses 10.0.2.2 to reach the Mac's localhost.
   // iOS simulator can use localhost directly.
   // Real device (same Wi-Fi): use your Mac's local IP, e.g. 192.168.1.42
-  static const String serverUrl = 'http://localhost:3000';       // Web browser
+  // static const String serverUrl = 'http://localhost:3000';       // Web browser
   // static const String serverUrl = 'http://10.0.2.2:3000';    // Android emulator
-  // static const String serverUrl = 'http://192.168.1.114:3000'; // Real device
+  static const String serverUrl = 'http://192.168.1.114:3000'; // Real device
   // static const String serverUrl = 'https://your-app.onrender.com'; // Production
 
   // ── Disappearing messages ──────────────────────────────────────────────────

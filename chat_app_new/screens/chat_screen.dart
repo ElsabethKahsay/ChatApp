@@ -7,7 +7,6 @@ import '../crypto/crypto_service.dart';
 import '../crypto/key_store.dart';
 import '../models/message.dart';
 import '../services/socket_service.dart';
-import '../services/message_store.dart';
 import '../widgets/chat_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -40,37 +39,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _initChat();
-  }
-
-  Future<void> _initChat() async {
-    await MessageStore.init();
-    await _initCryptoAndListeners();
-    await _loadStoredMessages();
-  }
-
-  Future<void> _loadStoredMessages() async {
-    try {
-      final stored = await MessageStore.getMessages(widget.peerId);
-      if (mounted && stored.isNotEmpty) {
-        setState(() {
-          _messages.addAll(stored.map((m) => Message(
-            id: m['id'] as String,
-            fromUserId: m['fromUserId'] as String,
-            text: m['text'] as String,
-            sentAt: DateTime.fromMillisecondsSinceEpoch(m['sentAt'] as int),
-            isMe: m['isMe'] as bool,
-            delivered: m['delivered'] as bool,
-            read: m['read'] as bool,
-            readAt: m['readAt'] != null
-                ? DateTime.fromMillisecondsSinceEpoch(m['readAt'] as int)
-                : null,
-          )));
-        });
-      }
-    } catch (e) {
-      print('❌ Failed to load stored messages: $e');
-    }
+    _initCryptoAndListeners();
   }
 
   Future<void> _initCryptoAndListeners() async {
@@ -81,9 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (myKeyPair == null) return;
 
       // 2. Import peer's public key
-      if (widget.peerPublicKeyBase64 == null) {
-        throw Exception('Missing peer public key - cannot establish secure chat');
-      }
+      if (widget.peerPublicKeyBase64 == null) return;
       final peerPubKey =
           await CryptoService.importPublicKey(widget.peerPublicKeyBase64!);
 
@@ -93,14 +60,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       setState(() => _isInit = true);
 
-      // 4. Ensure socket is connected and set status to online
-      if (!SocketService.isConnected) {
-        final token = await KeyStore.getAuthToken();
-        if (token == null) {
-          throw Exception('Missing auth token - please login again.');
-        }
-        await SocketService.connect(_myUserId!, token);
+      // 4. Get a socket auth token from secure storage, then connect
+      final token = await KeyStore.getAuthToken();
+      if (token == null) {
+        throw Exception('Missing auth token - please login again.');
       }
+      await SocketService.connect(_myUserId!, token);
       SocketService.sendStatus(online: true);
 
       // 5. Listen for incoming text messages
@@ -116,44 +81,14 @@ class _ChatScreenState extends State<ChatScreen> {
             text: plaintext,
             sentAt: DateTime.fromMillisecondsSinceEpoch(data['sentAt']),
             type: MessageType.text,
-            isMe: data['from'] == _myUserId,
-            delivered: true,
           );
 
           _addMessageLocally(msg);
-
-          // Save to secure local storage
-          await MessageStore.saveMessage(
-            message: msg,
-            conversationId: widget.peerId,
-            isMe: false,
-          );
-
-          // Send delivery acknowledgement
+          // Automatically send read/delivered acknowledgement.
           SocketService.sendAck(
               toUserId: data['from'], messageId: data['messageId']);
-
-          // Send read receipt
-          SocketService.sendReadReceipt(
-              toUserId: data['from'], messageId: data['messageId']);
-          await MessageStore.markAsRead(msg.id);
         } catch (e) {
           print('❌ Decrypt error: $e');
-        }
-      });
-
-      // 6. Listen for read receipts
-      SocketService.onReadReceipt((messageId, readAt) {
-        if (mounted) {
-          setState(() {
-            final index = _messages.indexWhere((m) => m.id == messageId);
-            if (index != -1) {
-              _messages[index] = _messages[index].copyWith(
-                read: true,
-                readAt: DateTime.fromMillisecondsSinceEpoch(readAt),
-              );
-            }
-          });
         }
       });
 
@@ -221,24 +156,15 @@ class _ChatScreenState extends State<ChatScreen> {
         messageId: messageId,
       );
 
-      // 3. Show in local UI and persist
+      // 3. Show in local UI immediately
       final msg = Message(
         id: messageId,
         fromUserId: _myUserId!,
         text: text,
         sentAt: DateTime.now(),
         type: MessageType.text,
-        isMe: true,
-        delivered: false,
       );
       _addMessageLocally(msg);
-
-      // Save to secure local storage
-      await MessageStore.saveMessage(
-        message: msg,
-        conversationId: widget.peerId,
-        isMe: true,
-      );
     } catch (e) {
       print('❌ Send error: $e');
       if (mounted) {
