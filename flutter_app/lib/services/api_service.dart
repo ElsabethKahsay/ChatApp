@@ -173,4 +173,113 @@ class ApiService {
       throw Exception('Failed to update status');
     }
   }
+
+  // ── Saved Messages Endpoints ─────────────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getSavedMessages(String token) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${Constants.serverUrl}/api/saved-messages'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(_timeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> messages = data['messages'] ?? [];
+        return messages.map((msg) => msg as Map<String, dynamic>).toList();
+      }
+
+      if (response.statusCode == 404) {
+        return []; // No saved messages yet
+      }
+
+      final error = jsonDecode(response.body)['error'] ?? 'Failed to load saved messages';
+      throw Exception(error);
+    } on FormatException catch (_) {
+      throw Exception('Invalid server response');
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Network error');
+    }
+  }
+
+  static Future<void> saveMessage({
+    required String token,
+    required String messageId,
+    required String text,
+    String? senderName,
+    String? senderId,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${Constants.serverUrl}/api/saved-messages'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'messageId': messageId,
+          'text': text,
+          'senderName': senderName ?? 'Unknown',
+          'senderId': senderId,
+          'savedAt': DateTime.now().toIso8601String(),
+        }),
+      ).timeout(_timeout);
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return;
+      }
+
+      if (response.statusCode == 409) {
+        throw Exception('Message already saved');
+      }
+
+      if (response.statusCode == 400) {
+        final error = jsonDecode(response.body)['error'] ?? 'Invalid request';
+        throw Exception(error);
+      }
+
+      final error = jsonDecode(response.body)['error'] ?? 'Failed to save message';
+      throw Exception(error);
+    } on FormatException catch (_) {
+      throw Exception('Invalid server response');
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Network error');
+    }
+  }
+
+  static Future<void> deleteSavedMessage({
+    required String token,
+    required String messageId,
+  }) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('${Constants.serverUrl}/api/saved-messages/$messageId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(_timeout);
+
+      if (response.statusCode == 200) {
+        return;
+      }
+
+      if (response.statusCode == 404) {
+        throw Exception('Message not found');
+      }
+
+      final error = jsonDecode(response.body)['error'] ?? 'Failed to delete message';
+      throw Exception(error);
+    } on FormatException catch (_) {
+      throw Exception('Invalid server response');
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Network error');
+    }
+  }
 }

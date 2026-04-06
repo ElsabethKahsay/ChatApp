@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_store.dart';
 import '../models/message.dart';
+import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../services/message_store.dart';
 import '../widgets/chat_bubble.dart';
@@ -14,7 +15,7 @@ class ChatScreen extends StatefulWidget {
   final String peerId;
   final String peerName;
   final String? peerPublicKeyBase64;
-  final dynamic contact; // Add this parameter to accept the contact
+  final dynamic contact;
 
   const ChatScreen({
     super.key,
@@ -103,7 +104,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       SocketService.sendStatus(online: true);
 
-      // 5. Listen for incoming text messages
+      // Listen for incoming text messages
       SocketService.onMessage((data) async {
         try {
           final payload = Map<String, dynamic>.from(data['payload']);
@@ -199,6 +200,69 @@ class _ChatScreenState extends State<ChatScreen> {
         SocketService.sendTyping(toUserId: widget.peerId, isTyping: false);
       });
     }
+  }
+
+  Future<void> _saveMessage(Message msg) async {
+    try {
+      final token = await KeyStore.getAuthToken();
+      if (token == null) {
+        _showError('Not authenticated');
+        return;
+      }
+
+      await ApiService.saveMessage(
+        token: token,
+        messageId: msg.id,
+        text: msg.text,
+        senderName: msg.isMe ? 'Me' : widget.peerName,
+        senderId: msg.fromUserId,
+      );
+
+      _showSuccess('Message saved!');
+    } catch (e) {
+      String errorMsg = e.toString();
+      if (errorMsg.contains('Exception:')) {
+        errorMsg = errorMsg.replaceFirst('Exception:', '').trim();
+      }
+      if (errorMsg.contains('already saved')) {
+        _showInfo('Message already saved');
+      } else {
+        _showError(errorMsg);
+      }
+    }
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showInfo(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.blue,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _sendText() async {
@@ -305,6 +369,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     return ChatBubble(
                       message: msg,
                       isMe: msg.fromUserId == _myUserId,
+                      onLongPress: () => _saveMessage(msg),
                     );
                   },
                 ),

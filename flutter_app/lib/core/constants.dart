@@ -11,7 +11,7 @@ class Constants {
 
   // ── Disappearing messages ──────────────────────────────────────────────────
   /// Default timer: received messages auto-delete after this duration.
-  static const Duration disappearDuration = Duration(seconds: 30);
+  static const Duration disappearDuration = Duration(seconds: 60);
 
   /// Media auto-deletes from R2 after this long (set matching R2 lifecycle rule).
   static const Duration mediaExpiry = Duration(hours: 24);

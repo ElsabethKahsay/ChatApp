@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../crypto/key_store.dart';
 import 'chat_screen.dart';
 import 'login_screen.dart';
+import 'saved_messages_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -132,6 +133,16 @@ class _ContactsScreenState extends State<ContactsScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bookmark),
+            tooltip: 'Saved Messages',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SavedMessagesScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _logout,

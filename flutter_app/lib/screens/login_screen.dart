@@ -122,13 +122,13 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      if (_isRegistering) {
-        _showSuccess('Creating your account...');
+      String userId;
 
+      if (_isRegistering) {
         // 1. Generate E2E Key Pair
         final keyPair = await CryptoService.generateKeyPair();
         final publicKeyB64 = await CryptoService.exportPublicKey(keyPair);
-        final userId = const Uuid().v4();
+        userId = const Uuid().v4();
 
         // 2. Register on Server
         await ApiService.register(
@@ -141,14 +141,15 @@ class _LoginScreenState extends State<LoginScreen> {
         // 3. Save Keys and Identity Locally
         await KeyStore.saveKeyPair(keyPair);
         await KeyStore.saveIdentity(userId: userId, username: username);
-
-        _showSuccess('Account created! Logging in...');
+      } else {
+        // For login, we don't know userId yet - login will return it
+        userId = '';
       }
 
       // 4. Perform Login
       final loginData = await ApiService.login(username, password);
       final String token = loginData['token'];
-      final String userId = loginData['userId'];
+      userId = loginData['userId'];
 
       // 5. Persist Session
       await KeyStore.saveAuthToken(token);
@@ -165,7 +166,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (mounted) {
-        _showSuccess('Welcome, $username!');
+        _showSuccess(_isRegistering ? 'Account created! Welcome, $username!' : 'Welcome back, $username!');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const ContactsScreen()),

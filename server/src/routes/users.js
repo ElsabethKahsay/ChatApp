@@ -269,4 +269,107 @@ router.post('/fcm-token', authenticate, async (req, res) => {
   }
 });
 
+// ── Saved Messages Endpoints ────────────────────────────────────────────────
+
+// GET /api/saved-messages - Get user's saved messages
+router.get('/saved-messages', authenticate, async (req, res) => {
+  try {
+    const user = await User.findOne({ userId: req.user.userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const savedMessages = user.savedMessages || [];
+    res.json({ 
+      success: true, 
+      messages: savedMessages,
+      count: savedMessages.length       
+    });
+  } catch (err) {
+    console.error('Get saved messages error:', err);
+    res.status(500).json({ error: 'Failed to retrieve saved messages' });
+  }
+});
+
+// POST /api/saved-messages - Save a message
+router.post('/saved-messages', authenticate, async (req, res) => {
+  try {
+    const { messageId, text, senderName, senderId, savedAt } = req.body;
+
+    if (!messageId || !text) {
+      return res.status(400).json({ error: 'Message ID and text are required' });
+    }
+
+    const user = await User.findOne({ userId: req.user.userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Initialize savedMessages array if it doesn't exist
+    if (!user.savedMessages) {
+      user.savedMessages = [];
+    }
+
+    // Check if message already saved
+    const alreadySaved = user.savedMessages.some(msg => msg.messageId === messageId);
+    if (alreadySaved) {
+      return res.status(409).json({ error: 'Message already saved' });
+    }
+
+    // Add new saved message
+    const savedMessage = {
+      messageId,
+      text,
+      senderName: senderName || 'Unknown',
+      senderId: senderId || null,
+      savedAt: savedAt ? new Date(savedAt) : new Date()
+    };
+
+    user.savedMessages.push(savedMessage);
+    await user.save();
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Message saved successfully',
+      savedMessage 
+    });
+  } catch (err) {
+    console.error('Save message error:', err);
+    res.status(500).json({ error: 'Failed to save message' });
+  }
+});
+
+// DELETE /api/saved-messages/:messageId - Remove a saved message
+router.delete('/saved-messages/:messageId', authenticate, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+
+    const user = await User.findOne({ userId: req.user.userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.savedMessages || user.savedMessages.length === 0) {
+      return res.status(404).json({ error: 'No saved messages found' });
+    }
+
+    const initialLength = user.savedMessages.length;
+    user.savedMessages = user.savedMessages.filter(msg => msg.messageId !== messageId);
+
+    if (user.savedMessages.length === initialLength) {
+      return res.status(404).json({ error: 'Message not found in saved items' });
+    }
+
+    await user.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Message removed from saved items'
+    });
+  } catch (err) {
+    console.error('Delete saved message error:', err);
+    res.status(500).json({ error: 'Failed to remove saved message' });
+  }
+});
+
 module.exports = router;
