@@ -3,47 +3,65 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const authenticate = require('../middleware/auth');
 const router = express.Router();
-const User = require("../db/mongo"); // Ensure this exports a Mongoose model
+const User = require("../db/mongo");
 
 // ── POST /api/register ──────────────────────────────────────────────────────
-// Stores (or updates) a user's public key and optional birthday.
-// `bday` is optional – only provided if the user chooses to share it.
 router.post("/register", async (req, res) => {
   const { userId, username, publicKey, password, bday } = req.body;
 
-  // All fields except bday are required
+  // Validation rules
   if (!userId || !username || !publicKey || !password) {
     return res.status(400).json({
-      error: "userId, username, publicKey, and password are required.",
+      error: "All fields are required: userId, username, publicKey, and password.",
     });
   }
 
-  // Prepare update payload
-  const updateFields = {
-    userId,
-    username,
-    publicKey,
-    lastSeen: new Date(),
-  };
-
-  // Hash the password in a secure way
-  if (password) {
-    const salt = await bcrypt.genSalt(12);
-    updateFields.passwordHash = await bcrypt.hash(password, salt);
+  // Username validation
+  if (username.length < 3 || username.length > 20) {
+    return res.status(400).json({
+      error: "Username must be between 3 and 20 characters.",
+    });
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    return res.status(400).json({
+      error: "Username can only contain letters, numbers, and underscores.",
+    });
   }
 
-  // If bday is provided, validate and add
-  if (bday !== undefined && bday !== null && bday !== "") {
-    const parsedBday = new Date(bday);
-    if (isNaN(parsedBday.getTime())) {
-      return res.status(400).json({
-        error: "Invalid bday format. Use an ISO date string (e.g. 1998-06-15).",
-      });
-    }
-    updateFields.bday = parsedBday;
+  // Password validation
+  if (password.length < 6) {
+    return res.status(400).json({
+      error: "Password must be at least 6 characters long.",
+    });
   }
 
   try {
+    // Check if username already exists (case-insensitive)
+    const existingUser = await User.findOne({ 
+      username: { $regex: new RegExp(`^${username}$`, 'i') } 
+    });
+    if (existingUser) {
+      return res.status(409).json({ error: "Username already taken. Please choose another." });
+    }
+
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const updateFields = {
+      userId,
+      username: username.toLowerCase().trim(),
+      publicKey,
+      passwordHash,
+      lastSeen: new Date(),
+    };
+
+    if (bday) {
+      const parsedBday = new Date(bday);
+      if (!isNaN(parsedBday.getTime())) {
+        updateFields.bday = parsedBday;
+      }
+    }
+
     const user = await User.findOneAndUpdate(
       { userId },
       updateFields,
@@ -54,20 +72,88 @@ router.post("/register", async (req, res) => {
       }
     );
 
-    res.json({
+    res.status(201).json({
       success: true,
+      message: "Account created successfully!",
       userId: user.userId,
       username: user.username,
-      bday: user.bday ?? null,
     });
   } catch (err) {
     console.error("Register error:", err);
-    res.status(500).json({ error: "Internal server error." });
+    res.status(500).json({ error: "Registration failed. Please try again later." });
+  }
+});
+
+// ── POST /api/login ──────────────────────────────────────────────────────────
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+
+  const jwtSecret = process.env.JWT_SECRET || 'dev-secret-please-change';
+
+  try {
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign({ userId: user.userId }, jwtSecret, { expiresIn: '7d' });
+
+    // Update status to online on login
+    await User.findOneAndUpdate({ userId: user.userId }, { status: true, lastSeen: new Date() });
+
+    res.json({
+      message: 'Login successful',
+      token,
+      userId: user.userId,
+      username: user.username
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── POST /api/auth (Socket.IO Token) ─────────────────────────────────────────
+router.post('/auth', async (req, res) => {
+  const { userId, password } = req.body;
+  const jwtSecret = process.env.JWT_SECRET || 'dev-secret-please-change';
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  try {
+    const user = await User.findOne({ userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (password) {
+      const match = await bcrypt.compare(password, user.passwordHash);
+      if (!match) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+    }
+
+    const token = jwt.sign({ userId }, jwtSecret, { expiresIn: '2h' });
+    await User.findOneAndUpdate({ userId }, { status: true, lastSeen: new Date() });
+    res.json({ token, userId: user.userId, username: user.username });
+  } catch (err) {
+    console.error('Auth error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
 // ── GET /api/public-key/:userId ─────────────────────────────────────────────
-// Returns a peer's public key (and username) for ECDH key exchange.
 router.get("/public-key/:userId", authenticate, async (req, res) => {
   try {
     const user = await User.findOne({ userId: req.params.userId });
@@ -81,7 +167,6 @@ router.get("/public-key/:userId", authenticate, async (req, res) => {
 });
 
 // ── GET /api/users ──────────────────────────────────────────────────────────
-// Returns a list of all registered users (for contact selection).
 router.get("/users", authenticate, async (_req, res) => {
   try {
     const users = await User.find(
@@ -92,6 +177,32 @@ router.get("/users", authenticate, async (_req, res) => {
   } catch (err) {
     console.error("List users error:", err);
     res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// ── GET /api/users/search ───────────────────────────────────────────────────
+router.get('/users/search', authenticate, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.status(400).json({ error: 'Query must be at least 2 characters' });
+    }
+
+    // Sanitize query - remove special characters
+    const sanitized = q.replace(/[^a-zA-Z0-9\-_]/g, '').substring(0, 30);
+
+    const users = await User.find(
+      {
+        username: { $regex: sanitized, $options: 'i' },
+        userId: { $ne: req.user.userId }, // Exclude current user
+      },
+      { userId: 1, username: 1, lastSeen: 1, status: 1 }
+    ).limit(20);
+
+    res.json({ users });
+  } catch (err) {
+    console.error('Search users error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
@@ -136,69 +247,24 @@ router.put('/status', authenticate, async (req, res) => {
   }
 });
 
-// ── POST /api/login ──────────────────────────────────────────────────────────
-// Login with userId and password and issue a JWT for Socket.IO.
-router.post('/login', async (req, res) => {
-  const { userId, password } = req.body;
-  const jwtSecret = process.env.JWT_SECRET || 'dev-secret-please-change';
-
-  if (!userId || !password) {
-    return res.status(400).json({ error: 'userId and password are required' });
-  }
-
+// ── POST /api/fcm-token ────────────────────────────────────────────────────
+router.post('/fcm-token', authenticate, async (req, res) => {
   try {
-    const user = await User.findOne({ userId });
-    if (!user || !user.passwordHash) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'FCM token is required' });
     }
 
-    const match = await bcrypt.compare(password, user.passwordHash);
-    if (!match) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    // Store FCM token for push notifications
+    await User.findOneAndUpdate(
+      { userId: req.user.userId },
+      { fcmToken: token, fcmTokenUpdatedAt: new Date() },
+      { new: true }
+    );
 
-    const token = jwt.sign({ userId }, jwtSecret, { expiresIn: '2h' });
-    await User.findOneAndUpdate({ userId }, { status: true, lastSeen: new Date() });
-    res.json({ token, userId: user.userId, username: user.username });
+    res.json({ success: true });
   } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ error: 'Internal server error.' });
-  }
-});
-
-// ── POST /api/auth ───────────────────────────────────────────────────────────
-// Issue a short-lived JWT for Socket.IO authentication.
-// Accepts either userId + password (fallback) or existing user token.
-router.post('/auth', async (req, res) => {
-  const { userId, password } = req.body;
-  const jwtSecret = process.env.JWT_SECRET || 'dev-secret-please-change';
-
-  if (!userId) {
-    return res.status(400).json({ error: 'userId is required' });
-  }
-
-  try {
-    const user = await User.findOne({ userId });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // If caller presented a password, verify it (strong mode)
-    if (password) {
-      const match = await bcrypt.compare(password, user.passwordHash || '');
-      if (!match) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-    } else {
-      // Legacy behavior: token by userId. Shy away in production.
-      console.warn('Auth endpoint used without password (legacy fallback).');
-    }
-
-    const token = jwt.sign({ userId }, jwtSecret, { expiresIn: '2h' });
-    await User.findOneAndUpdate({ userId }, { status: true, lastSeen: new Date() });
-    res.json({ token, userId: user.userId, username: user.username });
-  } catch (err) {
-    console.error('Auth error:', err);
+    console.error('FCM token update error:', err);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });

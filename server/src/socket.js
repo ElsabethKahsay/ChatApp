@@ -214,7 +214,32 @@ module.exports = (io, jwtSecret) => {
           messageId: data.messageId,
         });
       } else {
-        socket.emit('error', { message: 'Recipient offline for ack' });
+        await queueOfflinePayload(data.to, {
+          event: 'message_ack',
+          body: { from: socket.userId, messageId: data.messageId },
+        });
+      }
+    });
+
+    // ── Read Receipts ──────────────────────────────────────────────────────────
+
+    socket.on('message_read', async (data) => {
+      if (!data || typeof data.to !== 'string' || typeof data.messageId !== 'string') {
+        return socket.emit('error', { message: 'Malformed message_read event' });
+      }
+
+      const recipientSocketId = await getOnline(data.to);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('message_read', {
+          from: socket.userId,
+          messageId: data.messageId,
+          readAt: Date.now(),
+        });
+      } else {
+        await queueOfflinePayload(data.to, {
+          event: 'message_read',
+          body: { from: socket.userId, messageId: data.messageId, readAt: Date.now() },
+        });
       }
     });
 

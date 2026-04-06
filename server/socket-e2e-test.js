@@ -6,6 +6,12 @@ async function run() {
     const tokenA = (await axios.post('http://localhost:3000/api/auth', { userId: 'alice' })).data.token;
     const tokenB = (await axios.post('http://localhost:3000/api/auth', { userId: 'bob' })).data.token;
 
+    const onlineUsers = (await axios.get('http://localhost:3000/api/online-users', { headers: { Authorization: `Bearer ${tokenA}` } })).data.onlineUsers;
+    console.log('onlineUsers initially', onlineUsers.map(u => u.userId));
+
+    const presenceBob = (await axios.get('http://localhost:3000/api/presence/bob', { headers: { Authorization: `Bearer ${tokenA}` } })).data;
+    console.log('presence Bob:', presenceBob);
+
     const clientA = io('http://localhost:3000', { auth: { token: tokenA }, transports: ['websocket'] });
     const clientB = io('http://localhost:3000', { auth: { token: tokenB }, transports: ['websocket'] });
 
