@@ -16,20 +16,13 @@ const server = http.createServer(app);
 // Allow any origin for development to simplify Android connectivity
 const CORS_ORIGINS = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',') 
-  : ['http://localhost:8080', 'http://127.0.0.1:8080', 'http://localhost:3000', 'http://127.0.0.1:3000'];
+  : ['http://localhost:8080', 'http://127.0.0.1:8080', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://127.0.0.1:50153'];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, etc)
+    // Allow all origins in development
     if (!origin) return callback(null, true);
-    
-    // Check if origin is in allowed list
-    if (CORS_ORIGINS.indexOf(origin) !== -1 || CORS_ORIGINS.includes('*')) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      callback(null, true); // Allow all origins in development
-    }
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -47,7 +40,11 @@ const apiLimiter = rateLimit({
 
 // ── Socket.IO ──────────────────────────────────────────────────────────────
 const io = new Server(server, {
-  cors: corsOptions,
+  cors: {
+    origin: "*", // More permissive for development sockets
+    methods: ["GET", "POST"],
+    credentials: true
+  },
   pingTimeout: 60000,
 });
 
@@ -67,6 +64,8 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // ── REST Routes ────────────────────────────────────────────────────────────
 app.use('/api', require('./routes/users'));
 app.use('/api', require('./routes/media'));
+app.use('/api', require('./routes/saved_messages'));
+app.use('/api', require('./routes/groups'));
 
 // ── Socket relay ───────────────────────────────────────────────────────────
 require('./socket')(io, JWT_SECRET);
@@ -90,5 +89,31 @@ if (process.env.REDIS_URL) {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
+  console.log('╔═══════════════════════════════════════════════════════════╗');
+  console.log('║           SecureChat Server Started                       ║');
+  console.log('╠═══════════════════════════════════════════════════════════╣');
+  console.log(`║  Server URL: http://0.0.0.0:${PORT}                        ║`);
+  console.log(`║  Health check: http://<your-ip>:${PORT}/health             ║`);
+  console.log('║                                                           ║');
+  console.log('║  Testing from Mac:                                        ║');
+  console.log(`║    curl http://127.0.0.1:${PORT}/health                    ║`);
+  console.log('║                                                           ║');
+  console.log('║  Testing from Android device:                             ║');
+  console.log('║    1. Find your Mac IP: ipconfig getifaddr en0            ║');
+  console.log(`║    2. Update Constants.serverUrl in Flutter app           ║`);
+  console.log(`║    3. curl http://<mac-ip>:${PORT}/health                  ║`);
+  console.log('╚═══════════════════════════════════════════════════════════╝');
+
+  // Warn if using default JWT secret
+  if (JWT_SECRET === 'dev-secret-please-change') {
+    console.warn('\n⚠️  WARNING: Using default JWT_SECRET!');
+    console.warn('   Set JWT_SECRET in .env file for production!\n');
+  }
+
+  // Display MongoDB status
+  if (mongoose.connection.readyState === 1) {
+    console.log('✅ MongoDB connected');
+  } else {
+    console.warn('⏳ MongoDB connecting...');
+  }
 });

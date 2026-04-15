@@ -1,13 +1,19 @@
 const express = require("express");
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const authenticate = require('../middleware/auth');
 const router = express.Router();
 const User = require("../db/mongo");
 
 // ── POST /api/register ──────────────────────────────────────────────────────
 router.post("/register", async (req, res) => {
-  const { userId, username, publicKey, password, bday } = req.body;
+  // Check database connection
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: "Database unavailable. Please try again later." });
+  }
+
+  let { userId, username, publicKey, password, bday } = req.body;
 
   // Validation rules
   if (!userId || !username || !publicKey || !password) {
@@ -16,6 +22,9 @@ router.post("/register", async (req, res) => {
     });
   }
 
+  // Sanitize inputs
+  username = username.trim();
+  
   // Username validation
   if (username.length < 3 || username.length > 20) {
     return res.status(400).json({
@@ -42,6 +51,12 @@ router.post("/register", async (req, res) => {
     });
     if (existingUser) {
       return res.status(409).json({ error: "Username already taken. Please choose another." });
+    }
+
+    // Check if userId already exists (shouldn't happen with UUID but just in case)
+    const existingUserId = await User.findOne({ userId });
+    if (existingUserId) {
+      return res.status(409).json({ error: "User ID conflict. Please try again." });
     }
 
     const salt = await bcrypt.genSalt(12);
@@ -80,12 +95,24 @@ router.post("/register", async (req, res) => {
     });
   } catch (err) {
     console.error("Register error:", err);
+    // Specific error messages for common issues
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: "Invalid data format. Please check your inputs." });
+    }
+    if (err.code === 11000) {
+      return res.status(409).json({ error: "Username or ID already exists. Please try again." });
+    }
     res.status(500).json({ error: "Registration failed. Please try again later." });
   }
 });
 
 // ── POST /api/login ──────────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
+  // Check database connection
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: "Database unavailable. Please try again later." });
+  }
+
   const { username, password } = req.body;
   
   if (!username || !password) {
@@ -95,7 +122,10 @@ router.post('/login', async (req, res) => {
   const jwtSecret = process.env.JWT_SECRET || 'dev-secret-please-change';
 
   try {
-    const user = await User.findOne({ username });
+    // Case-insensitive username lookup
+    const user = await User.findOne({ 
+      username: { $regex: new RegExp(`^${username}$`, 'i') }
+    });
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -118,6 +148,9 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
+    if (err.name === 'MongoError' || err.name === 'MongoServerError') {
+      return res.status(503).json({ error: 'Database error. Please try again later.' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });

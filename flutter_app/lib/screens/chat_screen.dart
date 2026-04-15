@@ -3,11 +3,13 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/theme.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_store.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
+import '../services/saved_messages_service.dart';
 import '../services/message_store.dart';
 import '../widgets/chat_bubble.dart';
 
@@ -33,6 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
   final _messages = <Message>[];
   late SecretKey _sharedSecret;
+  late SavedMessagesService _savedMessagesService;
   String? _myUserId;
   bool _isInit = false;
   bool _isTyping = false;
@@ -42,6 +45,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _initChat();
+    _savedMessagesService = SavedMessagesService();
   }
 
   Future<void> _initChat() async {
@@ -77,9 +81,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _initCryptoAndListeners() async {
     try {
       // 1. Get my user ID and key pair
+      print('CHAT: Initializing crypto and listeners');
       _myUserId = await KeyStore.getUserId();
+      print('CHAT: Retrieved user ID: $_myUserId');
+      
+      if (_myUserId == null) {
+        print('CHAT: User ID is null, cannot initialize chat');
+        return;
+      }
+      
       final myKeyPair = await KeyStore.loadKeyPair();
-      if (myKeyPair == null) return;
+      if (myKeyPair == null) {
+        print('CHAT: Key pair is null, cannot initialize chat');
+        return;
+      }
 
       // 2. Import peer's public key
       if (widget.peerPublicKeyBase64 == null) {
@@ -95,14 +110,32 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _isInit = true);
 
       // 4. Ensure socket is connected and set status to online
+      print('CHAT: Checking socket connection status');
+      print('   Socket connected: ${SocketService.isConnected}');
+      print('   My userId: $_myUserId');
+      
       if (!SocketService.isConnected) {
+        print('CHAT: Socket not connected, getting auth token...');
         final token = await KeyStore.getAuthToken();
         if (token == null) {
+          print('CHAT: No auth token available');
           throw Exception('Missing auth token - please login again.');
         }
-        await SocketService.connect(_myUserId!, token);
+        print('CHAT: Auth token found, attempting to connect socket...');
+        try {
+          await SocketService.connect(_myUserId!, token).timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => throw Exception('Connection timeout'),
+          );
+          print('CHAT: Socket connection successful');
+        } catch (e) {
+          print('CHAT: Socket reconnect failed: $e');
+          // Continue anyway - messages will be sent when connection restores
+        }
       }
-      SocketService.sendStatus(online: true);
+      if (SocketService.isConnected) {
+        SocketService.sendStatus(online: true);
+      }
 
       // Listen for incoming text messages
       SocketService.onMessage((data) async {
@@ -202,20 +235,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _saveMessage(Message msg) async {
+  Future<void> _saveMessage(Message messageToSave) async {
     try {
-      final token = await KeyStore.getAuthToken();
-      if (token == null) {
-        _showError('Not authenticated');
-        return;
-      }
-
-      await ApiService.saveMessage(
-        token: token,
-        messageId: msg.id,
-        text: msg.text,
-        senderName: msg.isMe ? 'Me' : widget.peerName,
-        senderId: msg.fromUserId,
+      await _savedMessagesService.saveMessage(
+        messageToSave.text,
+        label: 'Chat with ${widget.peerName}',
       );
 
       _showSuccess('Message saved!');
@@ -267,25 +291,65 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendText() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || !_isInit) return;
+    print('CHAT: Attempting to send text message');
+    print('   Text: "$text"');
+    print('   Is init: $_isInit');
+    print('   My userId: $_myUserId');
+    print('   Peer ID: ${widget.peerId}');
+    
+    if (text.isEmpty || !_isInit) {
+      print('CHAT: Cannot send - text empty or not initialized');
+      return;
+    }
 
     _controller.clear();
     _onTextChanged('');
 
     final messageId = const Uuid().v4();
+    print('CHAT: Generated message ID: $messageId');
 
     try {
       // 1. Encrypt plaintext
+      print('CHAT: Encrypting message...');
       final encrypted = await CryptoService.encrypt(text, _sharedSecret);
+      print('CHAT: Message encrypted successfully');
 
-      // 2. Send encrypted payload via socket
-      SocketService.sendMessage(
-        toUserId: widget.peerId,
-        encryptedPayload: encrypted,
-        messageId: messageId,
-      );
+      // 2. Ensure socket is connected before sending
+      print('CHAT: Socket connected: ${SocketService.isConnected}');
+      if (!SocketService.isConnected) {
+        print('CHAT: Socket not connected, attempting to reconnect...');
+        final token = await KeyStore.getAuthToken();
+        if (token != null) {
+          try {
+            await SocketService.connect(_myUserId!, token).timeout(
+              const Duration(seconds: 3),
+              onTimeout: () => throw Exception('Connection timeout'),
+            );
+            print('CHAT: Reconnection successful');
+          } catch (e) {
+            print('CHAT: Could not reconnect: $e');
+          }
+        } else {
+          print('CHAT: No auth token available for reconnection');
+        }
+      }
 
-      // 3. Show in local UI and persist
+      // 3. Send encrypted payload via socket
+      print('CHAT: Attempting to send message via socket...');
+      try {
+        SocketService.sendMessage(
+          toUserId: widget.peerId,
+          encryptedPayload: encrypted,
+          messageId: messageId,
+        );
+        print('CHAT: Message sent successfully via socket');
+      } catch (socketError) {
+        print('CHAT: Socket error: $socketError');
+        // Message will be shown in UI but marked as not delivered
+        print('CHAT: Message queued - will send when connection restored');
+      }
+
+      // 4. Show in local UI and persist
       final msg = Message(
         id: messageId,
         fromUserId: _myUserId!,
@@ -293,8 +357,9 @@ class _ChatScreenState extends State<ChatScreen> {
         sentAt: DateTime.now(),
         type: MessageType.text,
         isMe: true,
-        delivered: false,
+        delivered: SocketService.isConnected,
       );
+      print('CHAT: Created message object, delivered: ${msg.delivered}');
       _addMessageLocally(msg);
 
       // Save to secure local storage
@@ -303,11 +368,25 @@ class _ChatScreenState extends State<ChatScreen> {
         conversationId: widget.peerId,
         isMe: true,
       );
+
+      // Show feedback if not connected
+      if (!SocketService.isConnected && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message saved - will send when connection restored'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     } catch (e) {
       print('❌ Send error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send message')),
+          SnackBar(
+            content: Text('Failed to send: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -325,16 +404,15 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.primaryCoral,
         elevation: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.peerName,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 20, color: Colors.white)),
             if (_isTyping)
               const Text('typing...',
                   style: TextStyle(fontSize: 12, color: Colors.white70)),
@@ -342,56 +420,50 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.info_outline),
+            icon: const Icon(Icons.info_outline, color: Colors.white),
             onPressed: () {},
           ),
         ],
       ),
-      body: SafeArea(
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFFFDE0EC), Color(0xFFEFDFFF), Color(0xFFFFF6FB)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: AppTheme.bgGradient,
+        ),
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                reverse: true,
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                itemCount: _messages.length,
+                itemBuilder: (_, i) {
+                  final msg = _messages[_messages.length - 1 - i];
+                  return ChatBubble(
+                    message: msg,
+                    isMe: msg.fromUserId == _myUserId,
+                    onLongPress: () => _saveMessage(msg),
+                  );
+                },
+              ),
             ),
-          ),
-          child: Column(
-            children: [
-              Expanded(
-                child: ListView.builder(
-                  reverse: true,
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                  itemCount: _messages.length,
-                  itemBuilder: (_, i) {
-                    final msg = _messages[_messages.length - 1 - i];
-                    return ChatBubble(
-                      message: msg,
-                      isMe: msg.fromUserId == _myUserId,
-                      onLongPress: () => _saveMessage(msg),
-                    );
-                  },
-                ),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primaryPurple.withOpacity(0.2),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color.fromRGBO(246, 154, 205, 0.14),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: _buildInputBar(),
-              ),
-            ],
-          ),
+              child: _buildInputBar(),
+            ),
+          ],
         ),
       ),
     );
@@ -401,8 +473,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Row(
       children: [
         IconButton(
-          icon:
-              const Icon(Icons.photo_library_rounded, color: Color(0xFFB56AA5)),
+          icon: const Icon(Icons.photo_library_rounded, color: AppTheme.primaryPurple),
           onPressed: () {
             // TODO: Add media sending
           },
@@ -412,7 +483,7 @@ class _ChatScreenState extends State<ChatScreen> {
             controller: _controller,
             decoration: InputDecoration(
               hintText: 'Write something sweet...',
-              hintStyle: const TextStyle(color: Color(0xFF9E8FA8)),
+              hintStyle: const TextStyle(color: AppTheme.textMuted),
               contentPadding:
                   const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               filled: true,
@@ -434,11 +505,7 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.all(12),
             decoration: const BoxDecoration(
               shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFFF69ACD), Color(0xFFBA7BEB)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              gradient: AppTheme.primaryGradient,
             ),
             child:
                 const Icon(Icons.send_rounded, color: Colors.white, size: 20),

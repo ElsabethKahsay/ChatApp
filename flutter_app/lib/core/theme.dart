@@ -2,51 +2,82 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
-  // ── Pastel palette ────────────────────────────────────────────────────────
+  // ── Primary Palette ────────────────────────────────────────────────────────
+  static const Color primaryPurple = Color(0xFF6C5DD3);
+  static const Color primaryTeal   = Color(0xFF00BFA6);
+  static const Color primaryCoral  = Color(0xFFFF6B6B);
+  static const Color primaryAmber  = Color(0xFFFFB800);
+  static const Color primaryBlue   = Color(0xFF4A90E2);
+  
+  // ── Pastel Accents ────────────────────────────────────────────────────────
   static const Color pink       = Color(0xFFF8B4C8);
   static const Color lightPink  = Color(0xFFFDE0EC);
   static const Color purple     = Color(0xFFD4A8F0);
   static const Color lightPurple= Color(0xFFEFDFFF);
-  static const Color blue       = Color(0xffa2d2ff);
-  static const Color lightblue  = Color(0xffbde0fe);
-  static const Color softWhite  = Color(0xFFFFF6FB);
-  static const Color textDark   = Color(0xFF3D2C4E);
-  static const Color textMuted  = Color(0xFF7A6B8A);
+  static const Color blue       = Color(0xFFA2D2FF);
+  static const Color lightBlue  = Color(0xFFBDE0FE);
+  static const Color mint       = Color(0xFFB5EAD7);
+  static const Color peach      = Color(0xFFFFDAC1);
+  static const Color lavender   = Color(0xFFE2D5F8);
+  static const Color sky        = Color(0xFFC7CEEA);
+  static const Color softWhite  = Color(0xFFF8F9FA);
+  static const Color textDark   = Color(0xFF2D3436);
+  static const Color textMuted  = Color(0xFF636E72);
 
-  // Added more pastel colors to the theme.
-  static const Color pastelPink = Color(0xFFFFC1E3);
-  static const Color pastelBlue = Color(0xFFB3E5FC);
-  static const Color pastelGreen = Color(0xFFC8E6C9);
-  static const Color pastelYellow = Color(0xFFFFF9C4);
-  static const Color pastelPurple = Color(0xFFE1BEE7);
+  // ── User Avatar Colors (diverse palette) ─────────────────────────────────
+  static const List<Color> avatarColors = [
+    Color(0xFF6C5DD3), // Purple
+    Color(0xFF00BFA6), // Teal
+    Color(0xFFFF6B6B), // Coral
+    Color(0xFFFFB800), // Amber
+    Color(0xFF4A90E2), // Blue
+    Color(0xFFE91E63), // Pink
+    Color(0xFF9C27B0), // Deep Purple
+    Color(0xFF00BCD4), // Cyan
+    Color(0xFF8BC34A), // Light Green
+    Color(0xFFFF9800), // Orange
+    Color(0xFF795548), // Brown
+    Color(0xFF607D8B), // Blue Grey
+  ];
 
   // ── Gradients ─────────────────────────────────────────────────────────────
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [purple, pink],
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
+    colors: [primaryPurple, primaryTeal],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
   );
 
-  static const LinearGradient blueGradient = LinearGradient(
-    colors: [blue, lightblue],
+  static const LinearGradient sunsetGradient = LinearGradient(
+    colors: [primaryCoral, primaryAmber],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const LinearGradient oceanGradient = LinearGradient(
+    colors: [primaryBlue, primaryTeal],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient bgGradient = LinearGradient(
-    colors: [softWhite, lightPink, lightPurple],
+    colors: [softWhite, lavender, mint],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );
+
+  static Color getAvatarColor(String userId) {
+    final index = userId.hashCode.abs() % avatarColors.length;
+    return avatarColors[index];
+  }
 
   // ── Theme ─────────────────────────────────────────────────────────────────
   static ThemeData get theme => ThemeData(
     useMaterial3: true,
     colorScheme: ColorScheme.fromSeed(
-      seedColor: pink,
+      seedColor: primaryPurple,
       brightness: Brightness.light,
-      primary: purple,
-      secondary: blue,
+      primary: primaryPurple,
+      secondary: primaryTeal,
       surface: softWhite,
     ),
     textTheme: GoogleFonts.quicksandTextTheme().apply(

@@ -1,11 +1,13 @@
 /**
- * socket.js — Pure relay. The server NEVER sees plaintext.
- * It only forwards opaque encrypted payloads between connected clients.
+ * socket.js — Message relay with persistence. The server NEVER sees plaintext.
+ * It forwards opaque encrypted payloads between connected clients.
  */
 const jwt = require('jsonwebtoken');
 const Redis = require('ioredis');
 const { createAdapter } = require('@socket.io/redis-adapter');
+const Group = require('./models/Group');
 const User = require('./db/mongo');
+const { saveMessage, getUndeliveredMessages, markDelivered } = require('./db/message');
 
 module.exports = (io, jwtSecret) => {
   let redisClient;
@@ -126,9 +128,10 @@ module.exports = (io, jwtSecret) => {
   });
 
   io.on('connection', async (socket) => {
-    console.log(` Socket connected: ${socket.id}`);
+    console.log(`🔌 Socket connected: ${socket.id}, userId: ${socket.userId}`);
 
     if (!socket.userId) {
+      console.log(`❌ Socket ${socket.id} has no userId, disconnecting`);
       socket.disconnect(true);
       return;
     }
@@ -136,6 +139,7 @@ module.exports = (io, jwtSecret) => {
     // allow single active socket per user; terminate the previous one
     const existingSocketId = await getOnline(socket.userId);
     if (existingSocketId && existingSocketId !== socket.id) {
+      console.log(`🔄 User ${socket.userId} already connected, replacing session`);
       const existingSocket = io.sockets.sockets.get(existingSocketId);
       existingSocket?.emit('session_replaced', { reason: 'new_connection' });
       existingSocket?.disconnect(true);
@@ -144,8 +148,17 @@ module.exports = (io, jwtSecret) => {
     await setOnline(socket.userId, socket.id);
     await User.findOneAndUpdate({ userId: socket.userId }, { status: true, lastSeen: new Date() });
     io.emit('presence_update', { userId: socket.userId, online: true });
+    console.log(`👤 User ${socket.userId} is now online`);
+
+    // Join rooms for all groups the user is in
+    const userGroups = await Group.find({ members: socket.userId });
+    userGroups.forEach(group => {
+      socket.join(`group:${group._id}`);
+      console.log(`👥 Socket ${socket.id} joined group room: group:${group._id}`);
+    });
 
     socket.emit('registered', { success: true, socketId: socket.id, userId: socket.userId });
+    console.log(`📧 Sent registration confirmation to ${socket.userId}`);
 
     await drainQueuedMessages(socket.userId, socket);
 
@@ -176,10 +189,23 @@ module.exports = (io, jwtSecret) => {
 
     const forwardMessage = (eventIn, eventOut) => {
       socket.on(eventIn, async (data) => {
+        console.log(`📨 Server received ${eventIn} from ${socket.userId}:`, {
+          to: data?.to,
+          messageId: data?.messageId,
+          payloadSize: data?.payload ? JSON.stringify(data.payload).length : 0
+        });
+        
         const err = validateSocketPayload(eventIn, data);
-        if (err) return socket.emit('error', { message: err });
+        if (err) {
+          console.log(`❌ Validation error for ${eventIn}:`, err);
+          socket.emit('error', { message: err });
+          socket.emit('message_failed', { messageId: data?.messageId, error: err });
+          return;
+        }
 
         const recipientSocketId = await getOnline(data.to);
+        console.log(`🔍 Looking for recipient ${data.to}, found socket: ${recipientSocketId}`);
+        
         const msg = {
           from: socket.userId,
           payload: data.payload,
@@ -188,8 +214,17 @@ module.exports = (io, jwtSecret) => {
         };
 
         if (recipientSocketId) {
+          console.log(`✅ Forwarding ${eventOut} to ${recipientSocketId}`);
           io.to(recipientSocketId).emit(eventOut, msg);
+          // Send acknowledgment to sender that message was delivered
+          socket.emit('message_delivered', {
+            messageId: data.messageId,
+            to: data.to,
+            status: 'delivered',
+            timestamp: Date.now(),
+          });
         } else {
+          console.log(`📪 Recipient ${data.to} offline, queuing message`);
           await queueOfflinePayload(data.to, { event: eventOut, body: msg });
           socket.emit('offline_queued', {
             to: data.to,
@@ -202,6 +237,33 @@ module.exports = (io, jwtSecret) => {
 
     forwardMessage('send_message', 'receive_message');
     forwardMessage('send_media', 'receive_media');
+
+    // ── Group Message Handling ──────────────────────────────────────────────
+    socket.on('send_group_message', async (data) => {
+      console.log(`📨 Group message from ${socket.userId} to ${data.groupId}`);
+      
+      if (!data.groupId || !data.payload || !data.messageId) {
+        return socket.emit('error', { message: 'Malformed group message' });
+      }
+
+      const msg = {
+        from: socket.userId,
+        groupId: data.groupId,
+        payload: data.payload, // Encrypted with Group Key
+        messageId: data.messageId,
+        sentAt: Date.now(),
+      };
+
+      // Relay to the group room (excludes the sender)
+      socket.to(`group:${data.groupId}`).emit('receive_group_message', msg);
+
+      // Acknowledge to sender
+      socket.emit('message_delivered', {
+        messageId: data.messageId,
+        groupId: data.groupId,
+        status: 'delivered',
+      });
+    });
 
     socket.on('message_ack', async (data) => {
       const err = validateSocketPayload('message_ack', data);

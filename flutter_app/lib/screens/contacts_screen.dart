@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import '../core/theme.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
+import '../services/socket_service.dart';
 import '../crypto/key_store.dart';
 import 'chat_screen.dart';
 import 'login_screen.dart';
@@ -116,11 +118,17 @@ class _ContactsScreenState extends State<ContactsScreen> {
   }
 
   Future<void> _logout() async {
+    // Disconnect socket first
+    SocketService.disconnect();
+    
+    // Clear all stored data
     await KeyStore.clear();
+    
     if (mounted) {
-      Navigator.pushReplacement(
-        context,
+      // Navigate to login and remove all previous routes
+      Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
       );
     }
   }
@@ -129,12 +137,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Contacts'),
-        backgroundColor: Colors.transparent,
+        title: const Text('Contacts', style: TextStyle(color: Colors.white)),
+        backgroundColor: AppTheme.primaryPurple,
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.bookmark),
+            icon: const Icon(Icons.bookmark, color: Colors.white),
             tooltip: 'Saved Messages',
             onPressed: () {
               Navigator.push(
@@ -144,27 +152,29 @@ class _ContactsScreenState extends State<ContactsScreen> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
+            icon: const Icon(Icons.logout, color: Colors.white),
             onPressed: _logout,
           ),
         ],
       ),
-      extendBodyBehindAppBar: true,
-      body: Padding(
-        padding: const EdgeInsets.only(top: 16.0),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: AppTheme.bgGradient,
+        ),
         child: Column(
           children: [
             // Search Bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            Container(
+              color: AppTheme.primaryPurple,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
                   hintText: 'Search users...',
-                  prefixIcon: const Icon(Icons.search),
+                  prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted),
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                          icon: const Icon(Icons.clear),
+                          icon: const Icon(Icons.clear, color: AppTheme.textMuted),
                           onPressed: () {
                             _searchController.clear();
                             _searchUsers('');
@@ -172,7 +182,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                         )
                       : null,
                   filled: true,
-                  fillColor: Colors.white.withOpacity(0.7),
+                  fillColor: Colors.white,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(24),
                     borderSide: BorderSide.none,
@@ -208,17 +218,57 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: users.length,
       itemBuilder: (context, index) {
         final contact = users[index];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: contact.online ? Colors.green : Colors.grey,
-            child: Text(contact.username[0].toUpperCase()),
+        final avatarColor = AppTheme.getAvatarColor(contact.userId);
+        
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: CircleAvatar(
+              radius: 28,
+              backgroundColor: avatarColor,
+              child: Text(
+                contact.username[0].toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                ),
+              ),
+            ),
+            title: Text(
+              contact.username,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: contact.online ? AppTheme.primaryTeal : Colors.grey,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  contact.online ? 'Online' : 'Offline',
+                  style: TextStyle(
+                    color: contact.online ? AppTheme.primaryTeal : Colors.grey,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+            onTap: () => _startChat(contact),
           ),
-          title: Text(contact.username),
-          subtitle: Text(contact.online ? 'Online' : 'Offline'),
-          onTap: () => _startChat(contact),
         );
       },
     );

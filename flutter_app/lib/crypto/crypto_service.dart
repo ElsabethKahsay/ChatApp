@@ -65,22 +65,42 @@ class CryptoService {
   // ── AES-256-GCM Decrypt ────────────────────────────────────────────────────
 
   /// Decrypts a payload produced by [encrypt].
-  /// Throws if authentication fails (tampered message).
+  /// Throws if authentication fails (tampered message) or if payload is malformed.
   static Future<String> decrypt(
     Map<String, dynamic> encrypted,
     SecretKey sharedSecret,
   ) async {
-    final algorithm = AesGcm.with256bits();
-    final secretBox = SecretBox(
-      base64Decode(encrypted['ciphertext'] as String),
-      nonce: base64Decode(encrypted['nonce'] as String),
-      mac: Mac(base64Decode(encrypted['mac'] as String)),
-    );
-    final plainBytes = await algorithm.decrypt(
-      secretBox,
-      secretKey: sharedSecret,
-    );
-    return utf8.decode(plainBytes);
+    try {
+      // Validate required fields
+      if (encrypted['ciphertext'] == null ||
+          encrypted['nonce'] == null ||
+          encrypted['mac'] == null) {
+        throw Exception('Invalid encrypted payload: missing required fields');
+      }
+
+      final ciphertext = base64Decode(encrypted['ciphertext'] as String);
+      final nonce = base64Decode(encrypted['nonce'] as String);
+      final macBytes = base64Decode(encrypted['mac'] as String);
+
+      final algorithm = AesGcm.with256bits();
+      final secretBox = SecretBox(
+        ciphertext,
+        nonce: nonce,
+        mac: Mac(macBytes),
+      );
+
+      final plainBytes = await algorithm.decrypt(
+        secretBox,
+        secretKey: sharedSecret,
+      );
+      return utf8.decode(plainBytes);
+    } on FormatException catch (e) {
+      throw Exception('Invalid encrypted payload format: $e');
+    } on SecretBoxAuthenticationError catch (e) {
+      throw Exception('Message authentication failed - possible tampering');
+    } catch (e) {
+      throw Exception('Decryption failed: $e');
+    }
   }
 
   // ── File Encryption ────────────────────────────────────────────────────────

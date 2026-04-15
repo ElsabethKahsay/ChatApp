@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import '../core/theme.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../services/push_notification_service.dart';
@@ -139,8 +140,13 @@ class _LoginScreenState extends State<LoginScreen> {
         );
 
         // 3. Save Keys and Identity Locally
-        await KeyStore.saveKeyPair(keyPair);
-        await KeyStore.saveIdentity(userId: userId, username: username);
+        try {
+          await KeyStore.saveKeyPair(keyPair);
+          await KeyStore.saveIdentity(userId: userId, username: username);
+        } catch (keystoreError) {
+          // Registration succeeded but local storage failed - critical error
+          throw Exception('Account created but failed to save keys locally. Please clear app data and try again.');
+        }
       } else {
         // For login, we don't know userId yet - login will return it
         userId = '';
@@ -152,13 +158,33 @@ class _LoginScreenState extends State<LoginScreen> {
       userId = loginData['userId'];
 
       // 5. Persist Session
-      await KeyStore.saveAuthToken(token);
-      await KeyStore.saveIdentity(userId: userId, username: username);
+      try {
+        await KeyStore.saveAuthToken(token);
+        await KeyStore.saveIdentity(userId: userId, username: username);
+      } catch (keystoreError) {
+        throw Exception('Login successful but failed to save session. Please try again.');
+      }
 
-      // 6. Connect Socket
-      await SocketService.connect(userId, token);
+      // 6. Connect Socket with timeout and error handling
+      // NOTE: We don't clear auth token on socket failure - user is still authenticated!
+      // Socket will auto-retry connection in background
+      try {
+        await SocketService.connect(userId, token).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            throw Exception('Connection timed out. Real-time features may be limited.');
+          },
+        );
+        
+        // Wait a moment to ensure connection is established
+        await Future.delayed(const Duration(milliseconds: 500));
+      } catch (socketError) {
+        // Log but don't block login - socket will retry in background
+        debugPrint('Socket connection warning: $socketError');
+        // Show warning but continue - messages will queue and send when connected
+      }
 
-      // 7. Initialize push notifications
+      // 7. Initialize push notifications (non-critical)
       try {
         await PushNotificationService.init();
       } catch (e) {
@@ -174,10 +200,24 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       String errorMsg = e.toString();
-      // Clean up error message
+      // Clean up error message for display
       if (errorMsg.contains('Exception:')) {
         errorMsg = errorMsg.replaceFirst('Exception:', '').trim();
       }
+
+      // Handle common network errors with user-friendly messages
+      if (errorMsg.contains('SocketException') ||
+          errorMsg.contains('Connection refused') ||
+          errorMsg.contains('Connection timed out')) {
+        errorMsg =
+            'Cannot connect to server. Please check:\n'
+            '• Server is running on your computer\n'
+            '• Phone and computer are on the same Wi-Fi\n'
+            '• IP address in constants.dart is correct';
+      } else if (errorMsg.contains('Network error')) {
+        errorMsg = 'Network error. Please check your internet connection.';
+      }
+
       _showError(errorMsg);
     } finally {
       if (mounted) {
@@ -197,187 +237,207 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(
-                    Icons.lock_outline,
-                    size: 64,
-                    color: Colors.blue,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'SecureChat',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _isRegistering ? 'Create a new account' : 'Sign in to continue',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[600],
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Username field
-                  TextFormField(
-                    controller: _usernameController,
-                    decoration: InputDecoration(
-                      labelText: 'Username',
-                      hintText: 'Enter your username',
-                      prefixIcon: const Icon(Icons.person),
-                      border: const OutlineInputBorder(),
-                      helperText: _isRegistering
-                          ? '$minUsernameLength-$maxUsernameLength chars, letters, numbers, underscores'
-                          : null,
-                    ),
-                    validator: _validateUsername,
-                    textInputAction: TextInputAction.next,
-                    enabled: !_isLoading,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Password field
-                  TextFormField(
-                    controller: _passwordController,
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      hintText: 'Enter your password',
-                      prefixIcon: const Icon(Icons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscurePassword
-                              ? Icons.visibility_off
-                              : Icons.visibility,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [AppTheme.primaryPurple, AppTheme.primaryTeal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Icon(
+                          Icons.chat_bubble_outline,
+                          size: 64,
+                          color: AppTheme.primaryPurple,
                         ),
-                        onPressed: () => setState(
-                            () => _obscurePassword = !_obscurePassword),
-                      ),
-                      border: const OutlineInputBorder(),
-                      helperText: _isRegistering
-                          ? 'At least $minPasswordLength characters'
-                          : null,
-                    ),
-                    obscureText: _obscurePassword,
-                    validator: _validatePassword,
-                    textInputAction: _isRegistering
-                        ? TextInputAction.next
-                        : TextInputAction.done,
-                    onFieldSubmitted: _isRegistering ? null : (_) => _handleAuth(),
-                    enabled: !_isLoading,
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Confirm password field (register only)
-                  if (_isRegistering)
-                    TextFormField(
-                      controller: _confirmPasswordController,
-                      decoration: InputDecoration(
-                        labelText: 'Confirm Password',
-                        hintText: 'Re-enter your password',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscureConfirmPassword
-                                ? Icons.visibility_off
-                                : Icons.visibility,
+                        const SizedBox(height: 16),
+                        const Text(
+                          'SecureChat',
+                          style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textDark,
                           ),
-                          onPressed: () => setState(() =>
-                              _obscureConfirmPassword =
-                                  !_obscureConfirmPassword),
+                          textAlign: TextAlign.center,
                         ),
-                        border: const OutlineInputBorder(),
-                      ),
-                      obscureText: _obscureConfirmPassword,
-                      validator: _validateConfirmPassword,
-                      textInputAction: TextInputAction.done,
-                      onFieldSubmitted: (_) => _handleAuth(),
-                      enabled: !_isLoading,
-                    ),
-
-                  if (_isRegistering) const SizedBox(height: 16),
-
-                  // Error message display
-                  if (_errorMessage != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red[50],
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red[200]!),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.error_outline,
-                              color: Colors.red[700], size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _errorMessage!,
-                              style: TextStyle(color: Colors.red[700]),
-                            ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _isRegistering ? 'Create a new account' : 'Sign in to continue',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey[600],
                           ),
-                        ],
-                      ),
-                    ),
-
-                  if (_errorMessage != null) const SizedBox(height: 16),
-
-                  // Submit button
-                  SizedBox(
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _handleAuth,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          textAlign: TextAlign.center,
                         ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                        const SizedBox(height: 32),
+
+                        // Username field
+                        TextFormField(
+                          controller: _usernameController,
+                          decoration: InputDecoration(
+                            labelText: 'Username',
+                            hintText: 'Enter your username',
+                            prefixIcon: const Icon(Icons.person),
+                            border: const OutlineInputBorder(),
+                            helperText: _isRegistering
+                                ? '$minUsernameLength-$maxUsernameLength chars, letters, numbers, underscores'
+                                : null,
+                          ),
+                          validator: _validateUsername,
+                          textInputAction: TextInputAction.next,
+                          enabled: !_isLoading,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Password field
+                        TextFormField(
+                          controller: _passwordController,
+                          decoration: InputDecoration(
+                            labelText: 'Password',
+                            hintText: 'Enter your password',
+                            prefixIcon: const Icon(Icons.lock),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
                               ),
-                            )
-                          : Text(
-                              _isRegistering ? 'Create Account' : 'Sign In',
-                              style: const TextStyle(fontSize: 16),
+                              onPressed: () => setState(
+                                  () => _obscurePassword = !_obscurePassword),
                             ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
+                            border: const OutlineInputBorder(),
+                            helperText: _isRegistering
+                                ? 'At least $minPasswordLength characters'
+                                : null,
+                          ),
+                          obscureText: _obscurePassword,
+                          validator: _validatePassword,
+                          textInputAction: _isRegistering
+                              ? TextInputAction.next
+                              : TextInputAction.done,
+                          onFieldSubmitted: _isRegistering ? null : (_) => _handleAuth(),
+                          enabled: !_isLoading,
+                        ),
+                        const SizedBox(height: 16),
 
-                  // Toggle mode button
-                  TextButton(
-                    onPressed: _isLoading ? null : _toggleMode,
-                    child: Text(
-                      _isRegistering
-                          ? 'Already have an account? Sign In'
-                          : 'Don\'t have an account? Create one',
+                        // Confirm password field (register only)
+                        if (_isRegistering)
+                          TextFormField(
+                            controller: _confirmPasswordController,
+                            decoration: InputDecoration(
+                              labelText: 'Confirm Password',
+                              hintText: 'Re-enter your password',
+                              prefixIcon: const Icon(Icons.lock_outline),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscureConfirmPassword
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed: () => setState(() =>
+                                    _obscureConfirmPassword =
+                                        !_obscureConfirmPassword),
+                              ),
+                              border: const OutlineInputBorder(),
+                            ),
+                            obscureText: _obscureConfirmPassword,
+                            validator: _validateConfirmPassword,
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) => _handleAuth(),
+                            enabled: !_isLoading,
+                          ),
+
+                        if (_isRegistering) const SizedBox(height: 16),
+
+                        // Error message display
+                        if (_errorMessage != null)
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red[50],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.red[200]!),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.error_outline,
+                                    color: Colors.red[700], size: 20),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage!,
+                                    style: TextStyle(color: Colors.red[700]),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                        if (_errorMessage != null) const SizedBox(height: 16),
+
+                        // Submit button
+                        SizedBox(
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : _handleAuth,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primaryPurple,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              elevation: 4,
+                            ),
+                            child: _isLoading
+                                ? const SizedBox(
+                                    height: 24,
+                                    width: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(Colors.white),
+                                    ),
+                                  )
+                                : Text(
+                                    _isRegistering ? 'Create Account' : 'Sign In',
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Toggle mode button
+                        TextButton(
+                          onPressed: _isLoading ? null : _toggleMode,
+                          child: Text(
+                            _isRegistering
+                                ? 'Already have an account? Sign In'
+                                : 'Don\'t have an account? Create one',
+                            style: TextStyle(color: AppTheme.primaryTeal),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
