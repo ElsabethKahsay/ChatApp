@@ -1,4 +1,12 @@
 require('dotenv').config();
+
+// Global error handlers to aid debugging and keep logs consistent
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION', reason && reason.stack ? reason.stack : reason);
+});
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -64,7 +72,8 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // ── REST Routes ────────────────────────────────────────────────────────────
 app.use('/api', require('./routes/users'));
 app.use('/api', require('./routes/media'));
-app.use('/api', require('./routes/saved_messages'));
+// saved_messages routes are implemented inside users.js to avoid duplication
+// app.use('/api', require('./routes/saved_messages'));
 app.use('/api', require('./routes/groups'));
 
 // ── Socket relay ───────────────────────────────────────────────────────────

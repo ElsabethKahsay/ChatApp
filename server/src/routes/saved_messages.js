@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
-const SavedMessage = require('../models/SavedMessage');
+const SavedMessage = require('../SavedMessage');
 
 // Save a new message
 router.post('/saved-messages', auth, async (req, res) => {

@@ -13,7 +13,7 @@ class SocketService {
   static Future<void> connect(String userId, String token) async {
     print('🔌 Connecting socket for user: $userId');
     print('   Server URL: ${Constants.serverUrl}');
-    print('   Token: ${token.substring(0, 20)}...');
+    print('   Token: ${token.length > 20 ? token.substring(0, 20) : token}...');
     
     // If already connecting, return the existing future
     if (_connectCompleter != null && !_connectCompleter!.isCompleted) {

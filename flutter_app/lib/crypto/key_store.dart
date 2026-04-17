@@ -162,7 +162,8 @@ class KeyStore {
     print('   Token exists: ${token != null}');
     print('   Token length: ${token?.length ?? 0}');
     if (token != null) {
-      print('   Token preview: ${token.substring(0, 20)}...');
+      final preview = token.length > 20 ? token.substring(0, 20) : token;
+      print('   Token preview: $preview...');
     }
     return token;
   }

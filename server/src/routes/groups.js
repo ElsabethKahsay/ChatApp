@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
-const Group = require('../models/Group');
+const Group = require('../Group');
 
 // Create a new group with wrapped keys for members
 router.post('/groups', auth, async (req, res) => {

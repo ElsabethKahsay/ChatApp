@@ -1,57 +1,22 @@
-
-> securechat-server@1.0.0 start
-> node src/index.js
-
-Server running on http://0.0.0.0:3000
+╔═══════════════════════════════════════════════════════════╗
+║           SecureChat Server Started                       ║
+╠═══════════════════════════════════════════════════════════╣
+║  Server URL: http://0.0.0.0:3000                        ║
+║  Health check: http://<your-ip>:3000/health             ║
+║                                                           ║
+║  Testing from Mac:                                        ║
+║    curl http://127.0.0.1:3000/health                    ║
+║                                                           ║
+║  Testing from Android device:                             ║
+║    1. Find your Mac IP: ipconfig getifaddr en0            ║
+║    2. Update Constants.serverUrl in Flutter app           ║
+║    3. curl http://<mac-ip>:3000/health                  ║
+╚═══════════════════════════════════════════════════════════╝
+⏳ MongoDB connecting...
 Redis connected for socket adapter
 Redis connected
 MongoDB connected
-[0mGET /health [32m200[0m 2.773 ms - 15[0m
-CORS blocked origin: http://localhost:8080
-[0mOPTIONS /api/register [32m204[0m 2.870 ms - 0[0m
-CORS blocked origin: http://localhost:8080
-[0mPOST /api/register [32m201[0m 257.302 ms - 123[0m
-CORS blocked origin: http://localhost:8080
-[0mOPTIONS /api/login [32m204[0m 0.141 ms - 0[0m
-CORS blocked origin: http://localhost:8080
-[0mPOST /api/login [32m200[0m 219.119 ms - 298[0m
-CORS blocked origin: http://localhost:8080
- Authenticated socket TKz7qp50REX0ouNpAAAB as ed6e35d0-ca27-4f34-9007-ec909b4059f0
- Socket connected: TKz7qp50REX0ouNpAAAB
-CORS blocked origin: http://localhost:8080
-[0mOPTIONS /api/users [32m204[0m 0.168 ms - 0[0m
-CORS blocked origin: http://localhost:8080
-[0mGET /api/users [32m200[0m 7.007 ms - 1745[0m
-CORS blocked origin: http://localhost:8080
-[0mOPTIONS /api/online-users [32m204[0m 0.236 ms - 0[0m
-CORS blocked origin: http://localhost:8080
-[0mGET /api/online-users [32m200[0m 2.571 ms - 194[0m
-CORS blocked origin: http://localhost:8080
-[0mOPTIONS /api/public-key/test_user [32m204[0m 0.154 ms - 0[0m
-CORS blocked origin: http://localhost:8080
-[0mGET /api/public-key/test_user [32m200[0m 2.780 ms - 51[0m
-  Disconnected: ed6e35d0-ca27-4f34-9007-ec909b4059f0
-CORS blocked origin: http://localhost:49504
-[0mOPTIONS /api/register [32m204[0m 3.111 ms - 0[0m
-CORS blocked origin: http://localhost:49504
-[0mPOST /api/register [32m201[0m 234.693 ms - 126[0m
-CORS blocked origin: http://localhost:49504
-[0mOPTIONS /api/login [32m204[0m 0.096 ms - 0[0m
-CORS blocked origin: http://localhost:49504
-[0mPOST /api/login [32m200[0m 229.326 ms - 301[0m
-CORS blocked origin: http://localhost:49504
- Authenticated socket 2i58xlUb8UNc4arlAAAD as 604e3584-3bfa-4aa4-bb24-91c8c1220794
- Socket connected: 2i58xlUb8UNc4arlAAAD
-CORS blocked origin: http://localhost:49504
-[0mOPTIONS /api/users [32m204[0m 0.184 ms - 0[0m
-CORS blocked origin: http://localhost:49504
-[0mGET /api/users [32m200[0m 2.023 ms - 1901[0m
-CORS blocked origin: http://localhost:49504
-[0mOPTIONS /api/online-users [32m204[0m 0.104 ms - 0[0m
-CORS blocked origin: http://localhost:49504
-[0mGET /api/online-users [32m200[0m 1.716 ms - 197[0m
-CORS blocked origin: http://localhost:49504
-[0mOPTIONS /api/public-key/test_user [32m204[0m 0.161 ms - 0[0m
-CORS blocked origin: http://localhost:49504
-[0mGET /api/public-key/test_user [32m200[0m 2.304 ms - 51[0m
-  Disconnected: 604e3584-3bfa-4aa4-bb24-91c8c1220794
+[0mGET /health [32m200[0m 1.649 ms - 15[0m
+[0mPOST /api/register [32m201[0m 213.575 ms - 120[0m
+[0mPOST /api/login [32m200[0m 199.111 ms - 271[0m
+[0mGET /api/users [32m200[0m 3.026 ms - 2523[0m

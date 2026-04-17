@@ -5,7 +5,7 @@
 const jwt = require('jsonwebtoken');
 const Redis = require('ioredis');
 const { createAdapter } = require('@socket.io/redis-adapter');
-const Group = require('./models/Group');
+const Group = require('./Group');
 const User = require('./db/mongo');
 const { saveMessage, getUndeliveredMessages, markDelivered } = require('./db/message');
 
