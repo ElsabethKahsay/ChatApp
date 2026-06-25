@@ -51,9 +51,10 @@ class MessageStore {
 
   static Future<SecretKey> _deriveVaultKey() async {
     final userId = await KeyStore.getUserId();
+    if (userId == null) throw Exception('Cannot derive vault key: no userId');
     final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
     return await hkdf.deriveKey(
-      secretKey: SecretKey(utf8.encode(userId!)),
+      secretKey: SecretKey(utf8.encode(userId)),
       nonce: utf8.encode('v11_production_salt'),
     );
   }

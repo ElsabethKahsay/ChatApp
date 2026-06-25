@@ -63,56 +63,67 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       _myUserId = await KeyStore.getUserId();
       final myKeyPair = await KeyStore.loadKeyPair();
-      if (myKeyPair == null || widget.peerPublicKeyBase64 == null) return;
 
-      final peerPubKey = await CryptoService.importPublicKey(widget.peerPublicKeyBase64!);
-      _sharedSecret = await CryptoService.deriveSharedSecret(myKeyPair, peerPubKey);
-
-      // 1. Instant Load: Local history
-      final localMsgs = (await MessageStore.getMessages(widget.peerId)).map((m) => Message(
-        id: m['id'], fromUserId: m['fromUserId'], text: m['text'],
-        sentAt: DateTime.fromMillisecondsSinceEpoch(m['sentAt']),
-        isMe: m['isMe'], delivered: m['delivered'],
-        readAt: m['readAt'] != null ? DateTime.fromMillisecondsSinceEpoch(m['readAt']) : null,
-      )).toList();
-
-      if (mounted) { setState(() { for (var m in localMsgs) _seenIds.add(m.id); _messages.addAll(localMsgs); _isInit = true; }); }
-
-      // 2. Perfection Sync: Fetch 24h gaps + TRIGGER READ RECEIPTS
-      final token = await KeyStore.getAuthToken();
-      if (token != null) {
-        final serverHistory = await ApiService.getMessageHistory(widget.peerId, token);
-        for (var sm in serverHistory) {
-          if (_messages.any((m) => m.id == sm['messageId'])) continue;
-          try {
-            final payload = Map<String, dynamic>.from(sm['payload'] as Map);
-            final processed = await SocketService.processPayload(
-              payload: payload,
-              secret: _sharedSecret!,
-              messageId: sm['messageId']
-            );
-            
-            final msg = Message(
-              id: sm['messageId'], 
-              fromUserId: sm['from'], 
-              text: processed['text']!, 
-              sentAt: DateTime.fromMillisecondsSinceEpoch(sm['sentAt']), 
-              isMe: sm['from'] == _myUserId,
-              mediaUrl: processed['mediaPath'],
-              delivered: true,
-            );
-            if (mounted) _addMessage(msg);
-            await MessageStore.saveMessage(message: msg, conversationId: widget.peerId, isMe: msg.isMe);
-          } catch (_) {}
-        }
-        if (mounted) setState(() => _messages.sort((a, b) => b.sentAt.compareTo(a.sentAt)));
-
-        // V1 FINAL POLISH: Mark all currently visible messages as read locally and on server
-        await MessageStore.markAsRead(widget.peerId);
-        SocketService.sendReadReceipt(toUserId: widget.peerId, messageId: 'batch');
+      // 1. Instant Load: Local history (always show, even if crypto fails)
+      try {
+        final localMsgs = (await MessageStore.getMessages(widget.peerId)).map((m) => Message(
+          id: m['id'], fromUserId: m['fromUserId'], text: m['text'],
+          sentAt: DateTime.fromMillisecondsSinceEpoch(m['sentAt']),
+          isMe: m['isMe'], delivered: m['delivered'],
+          readAt: m['readAt'] != null ? DateTime.fromMillisecondsSinceEpoch(m['readAt']) : null,
+        )).toList();
+        if (mounted) setState(() { for (var m in localMsgs) _seenIds.add(m.id); _messages.addAll(localMsgs); _isInit = true; });
+      } catch (e) {
+        debugPrint('Local messages error: $e');
+        if (mounted) setState(() => _isInit = true);
       }
 
-      // 3. LISTEN for real-time updates
+      // 2. Crypto setup (can fail without breaking UI)
+      if (myKeyPair != null && widget.peerPublicKeyBase64 != null) {
+        try {
+          final peerPubKey = await CryptoService.importPublicKey(widget.peerPublicKeyBase64!);
+          _sharedSecret = await CryptoService.deriveSharedSecret(myKeyPair, peerPubKey);
+        } catch (e) {
+          debugPrint('Crypto init error: $e');
+        }
+      }
+
+      // 3. Server sync (only if shared secret available)
+      if (_sharedSecret != null) {
+        final token = await KeyStore.getAuthToken();
+        if (token != null) {
+          final serverHistory = await ApiService.getMessageHistory(widget.peerId, token);
+          for (var sm in serverHistory) {
+            if (_messages.any((m) => m.id == sm['messageId'])) continue;
+            try {
+              final payload = Map<String, dynamic>.from(sm['payload'] as Map);
+              final processed = await SocketService.processPayload(
+                payload: payload,
+                secret: _sharedSecret!,
+                messageId: sm['messageId']
+              );
+              
+              final msg = Message(
+                id: sm['messageId'], 
+                fromUserId: sm['from'], 
+                text: processed['text']!, 
+                sentAt: DateTime.fromMillisecondsSinceEpoch(sm['sentAt']), 
+                isMe: sm['from'] == _myUserId,
+                mediaUrl: processed['mediaPath'],
+                delivered: true,
+              );
+              if (mounted) _addMessage(msg);
+              await MessageStore.saveMessage(message: msg, conversationId: widget.peerId, isMe: msg.isMe);
+            } catch (_) {}
+          }
+          if (mounted) setState(() => _messages.sort((a, b) => b.sentAt.compareTo(a.sentAt)));
+
+          await MessageStore.markAsRead(widget.peerId);
+          SocketService.sendReadReceipt(toUserId: widget.peerId, messageId: 'batch');
+        }
+      }
+
+      // 4. LISTEN for real-time updates
       _msgSub = SocketService.messageStream.listen((msg) {
         if (msg.fromUserId == widget.peerId && mounted) {
           _addMessage(msg);
@@ -141,6 +152,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       debugPrint('Sync Error: $e');
+      if (mounted) setState(() => _isInit = true);
     }
   }
 
@@ -149,8 +161,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty || !_isInit) return;
     _controller.clear();
     final id = const Uuid().v4();
-    final encrypted = await CryptoService.encrypt(text, _sharedSecret!);
-    SocketService.sendMessage(toUserId: widget.peerId, encryptedPayload: encrypted, messageId: id);
+    if (_sharedSecret != null) {
+      final encrypted = await CryptoService.encrypt(text, _sharedSecret!);
+      SocketService.sendMessage(toUserId: widget.peerId, encryptedPayload: encrypted, messageId: id);
+    } else {
+      SocketService.sendMessage(toUserId: widget.peerId, encryptedPayload: {'ciphertext': text}, messageId: id);
+    }
     final msg = Message(id: id, fromUserId: _myUserId!, text: text, sentAt: DateTime.now(), isMe: true);
     _addMessage(msg);
     await MessageStore.saveMessage(message: msg, conversationId: widget.peerId, isMe: true);
