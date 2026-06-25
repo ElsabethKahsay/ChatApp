@@ -331,6 +331,17 @@ router.post('/unblock', authenticate, async (req, res) => {
   }
 });
 
+router.post('/fcm-token', authenticate, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'Missing FCM token' });
+    await User.findOneAndUpdate({ userId: req.user.userId }, { fcmToken: token });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
 router.get('/blocked', authenticate, async (req, res) => {
   try {
     const user = await User.findOne(

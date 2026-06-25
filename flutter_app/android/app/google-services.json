@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "251505035498",
+    "project_id": "chatapp-b46ea",
+    "storage_bucket": "chatapp-b46ea.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:251505035498:android:e74b4fa78747f9433daf93",
+        "android_client_info": {
+          "package_name": "com.example.securechat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBAD33NcZ0oqOXdUVetJwx1ReEtn2kkFzk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
