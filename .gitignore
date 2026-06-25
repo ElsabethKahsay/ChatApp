@@ -1,0 +1,62 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+
+# Android
+flutter_app/android/.gradle/
+flutter_app/android/app/build/
+flutter_app/android/local.properties
+flutter_app/android/.idea/
+flutter_app/android/*.iml
+flutter_app/android/captures/
+flutter_app/android/build/
+flutter_app/android/gradle/wrapper/gradle-wrapper.jar
+
+# iOS
+flutter_app/ios/.symlinks/
+flutter_app/ios/Pods/
+flutter_app/.generated/
+flutter_app/ios/Runner/GoogleService-Info.plist
+
+# Web
+flutter_app/web/.dart_tool/
+
+# Build outputs
+*.apk
+*.aab
+*.ipa
+*.app
+flutter_app/build/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Server
+server/node_modules/
+server/.env
+server/logs/
+server/dump.rdb
+
+# Runtime artifacts
+ChatApp.bundle
+*.log
+*.pid
+dump.rdb
+
+# Dependency lockfiles (managed inside server/)
+package-lock.json
+
+# Firebase config (local)
+firebase.json
+.firebaserc
+dataconnect/

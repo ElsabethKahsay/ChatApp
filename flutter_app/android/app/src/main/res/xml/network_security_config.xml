@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Network security configuration for development - allows cleartext HTTP traffic -->
+<!-- In production, replace this with HTTPS-only configuration -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <!-- Domain-specific configurations can be added here for production -->
+    <!-- Example:
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">your-domain.com</domain>
+        <pin-set expiration="2025-01-01">
+            <pin digest="SHA-256">sha256/...</pin>
+        </pin-set>
+    </domain-config>
+    -->
+</network-security-config>
